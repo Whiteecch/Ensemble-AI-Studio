@@ -2,7 +2,7 @@
 
 本目录收录这套多角色会话引擎（多智能体角色扮演 harness）的设计与实现文档。代码在 `app/`：引擎 `app/src/harness/`、桌面界面 `app/src/harness/gui/`、示例素材 `app/characters/` 与 `app/scenes/`；配置在 `app/config/`（`models.yaml` 档位映射、`bid.yaml` 竞价参数）。
 
-**阅读顺序**：`design.md` → `technical-scheme.md` → `ui-and-scene-freedom.md` → `implementation-plan.md`。前三篇描述当前口径，最后一篇是开发过程记录，可最后读或按需查阅。
+**阅读顺序**：`design.md` → `technical-scheme.md` → `ui-and-scene-freedom.md` → `implementation-plan.md`；要给最终用户做安装包，另读 `packaging.md`。前三篇描述当前口径，第四篇是开发过程记录，可最后读或按需查阅。
 
 **命名约定**：文档与代码注释中的「设计文档」指 `docs/design.md`，「技术方案」指 `docs/technical-scheme.md`。
 
@@ -35,3 +35,9 @@
 ---
 
 文档中的角色示例为公有领域的演示素材（贝克街221B / 福尔摩斯 / 华生），与任何具体作品的设定无关。实现记录中出现的角色名一律使用中性占位 `甲/乙/丙/丁`。
+
+## 5. `packaging.md` — Packaging & Distribution Plan: one-file installers
+
+- **是什么**：打包与分发方案（**尚未实施**）。前置改造（冻结态资源路径 `paths.py`、用户数据目录 `%APPDATA%\Ensemble-AI-Studio`、首次运行播种）、PyInstaller 两种产物、Inno Setup 一键安装包、一条命令构建、发版流程与风险对策，末尾附可打勾的实施清单。
+- **对应代码**：拟新增 `app/src/harness/paths.py`、`packaging/`（`ensemble.spec`、`entry_gui.py`、`installer.iss`、`build.ps1`）。
+- **谁读**：想给最终用户一个「下载即装」的安装包，或要给项目接 CI 自动出包的人。
