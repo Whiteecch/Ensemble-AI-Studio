@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+runs/
+*.sqlite
+*.egg-info/
+.env.deepseek
+# 场景运行期 sidecar（虚拟钟与演员表状态，由 scenestore 就地写出）——不是素材，不进仓库
+*.runtime.json

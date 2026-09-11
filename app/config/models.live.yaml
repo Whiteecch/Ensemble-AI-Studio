@@ -1,0 +1,29 @@
+# live 档（需 DEEPSEEK_API_KEY）：think/speak 统一 deepseek-v4-flash。
+# 决定(2026-09)：speak 也走 flash 且 thinking: disabled —— 便宜、低延迟、产出稳定，
+#   temperature 仅在 thinking=disabled 时随请求体下发（见 backends/deepseek._payload）。
+#   speak 台词的随机度靠 temperature(0.7) 控制；think 仍关思考、低温，锁 JSON。
+# 档位统一到 flash（不再用 pro 思考档型号）：flash 已覆盖 think+speak 两档。
+think:
+  backend: deepseek
+  model: deepseek-v4-flash
+  params:
+    thinking: disabled
+    max_tokens: 400
+    temperature: 0.3
+speak:
+  backend: deepseek
+  model: deepseek-v4-flash
+  params:
+    thinking: disabled     # 便宜且非思考；temperature 只在此模式下生效
+    temperature: 0.7       # 台词生成可容忍的随机度，离线 stub 不受影响
+    max_tokens: 1024
+# 场景/叙述者（narrate）：只在对话卡住时开口，写一到两行「实际发生了什么」。
+# temperature 略高于 think（过场文字要不像模板），max_tokens 只留 200（一到两行的硬约束，
+# 模型想铺陈也没有空间）；仍关思考档——一次过场不值得等思考。
+narrate:
+  backend: deepseek
+  model: deepseek-v4-flash
+  params:
+    thinking: disabled
+    temperature: 0.8
+    max_tokens: 200

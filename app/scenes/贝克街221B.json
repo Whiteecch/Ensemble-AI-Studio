@@ -1,0 +1,43 @@
+{
+  "name": "贝克街221B",
+  "date": "",
+  "background": "十九世纪末的伦敦。二楼的起居室兼作事务所：壁炉常年生着火，窗外是终日不散的黄雾，楼下哈德森太太的脚步声一到十一点就会准时出现在楼梯口。",
+  "description": "一间杂乱的起居室：两张扶手椅隔炉相对，小桌上摊着放大镜、烟斗与昨夜的报纸；靠墙的沙发堆着未拆的信件，小提琴斜倚在书架上。",
+  "description_mutable": false,
+  "plot_direction": "让两人在夜里把一桩线索不全的案子翻来覆去地推；福尔摩斯越说越快，华生负责把他拽回地面。",
+  "hooks": [
+    {
+      "id": "h1",
+      "condition": "有人提起一桩未结的案子",
+      "event_kind": "context",
+      "context_text": "福尔摩斯把烟斗从唇边移开，眼里那点倦意一扫而空——他坐直了。",
+      "visible": true
+    },
+    {
+      "id": "h2",
+      "condition": "虚拟钟走到 22:30",
+      "event_kind": "character",
+      "character_name": "华生",
+      "action": "remove",
+      "visible": true
+    }
+  ],
+  "characters": [
+    {
+      "name": "福尔摩斯",
+      "entered_at": "",
+      "entered_round": 0
+    },
+    {
+      "name": "华生",
+      "entered_at": "",
+      "entered_round": 0
+    }
+  ],
+  "hard_boundary": {
+    "type": "time",
+    "value": "23:00",
+    "desc": "就寝"
+  },
+  "start_time": "21:00"
+}

@@ -1,0 +1,14 @@
+think:
+  backend: stub
+  model: stub
+  params: {}
+speak:
+  backend: stub
+  model: stub
+  params: {}
+# 场景/叙述者（narrate）：对话卡住时出来推进一步的那一档。缺这一档时引擎自动退用
+# speak 档——旧配置不加也能跑。
+narrate:
+  backend: stub
+  model: stub
+  params: {}

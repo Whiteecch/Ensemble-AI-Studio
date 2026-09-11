@@ -1,0 +1,6 @@
+# Demo 专用竞价参数：真实 LLM think 的 urge 自标注普遍偏低，
+# 默认 speak_threshold=0.1 常致全员静默。放开为 0 以便展示流畅对白。
+# demo_alternate 会强制在场者轮流开口，故 interruption 阈值此处无关紧要。
+interruption_threshold: 0.0
+speak_threshold: 0.0
+silence_k: 8
