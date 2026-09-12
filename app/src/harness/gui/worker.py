@@ -21,6 +21,13 @@ ticker 按 v = 开始 + 流逝 × 流速 连续计算并广播 sig_metrics；角
 run_root：每次建引擎都取 run_base 下唯一的 app-<uuid> 子目录（先 mkdir 走真实
 AsyncSqliteSaver），重开/切换模型即换新目录，绝不复用，杜绝串场累积（同 start-demo）。
 
+流式开口（《人际关系与场景推进》§二，缺省**关**）：开启时引擎的 speak 逐片吐出正文，
+本 worker 在**节拍循环**里增量读引擎的只读接收器（`engine.speak_stream_tail()`，照
+`think_log_tail` 的范式与"已读到哪"的纪律，游标 `_last_speak_seq` 每场归零）并把新片转成
+`sig_speak_delta` / `sig_speak_end` 两条跨线程信号；界面据此建临时气泡、定稿或撤掉。
+关闭时不读、不发、一个字节都不多（老路径逐字节不变）。开关的权威期望值 `_stream_speak`
+记在本 worker（与 `_auto_narrate` 同纪律），建引擎时带上。
+
 事件门控步进（不烧空 token）：autoplay 只在「有理由反应」时 step——开场、上场 step
 产出了新消息、human 插话/手动继续 都会触发一步；一步无产出（无人回应/静默）即停步
 进入「等待中…可随时插话」，等下一个事件或由独立虚拟钟 ticker 到点自然收束。每轮消息
@@ -35,6 +42,14 @@ unmute_character / schedule_cast_change 承载——一律经 _submit_cast 投�
 建引擎时把**角色库目录**交给引擎（cfg["characters_dir"]，缺省 = 已装载卡所在目录）：
 引擎据此按需装卡，故任何库中角色都能在任何时刻加入任何场景，且构造期就能补齐场景名单
 里没被装载的那些人。
+
+信息库（§9.1/§13.3）：建引擎时把**信息库根**（缺省 `app/libraries`，见
+`_default_libraries_root`）与用户设置里的「信息库检索 开/关」（§10.2）一起交给引擎；
+建引擎**之前**先给这一场可能用到的每一张卡播种（`_seed_card_libraries`：本场装载的 +
+角色库目录里其余的——后者随时可能被「添加角色」请进场）——老卡上的
+`knowledge_boundary` 就是在这里真的变成库里条目的（库已存在则跳过，幂等）。收尾
+（`_finalize_locked`）时显式调一次幂等的 `prepare_settlement()`：引擎只准备、界面才决定，
+弹窗留给下一阶段。
 
 场景外壳（§5/S4b）：save_scene / reset_scene / set_autosave_every / set_language /
 apply_scene_config 同样一律投到引擎 loop，GUI 线程绝不直接碰引擎。
@@ -69,17 +84,19 @@ import time
 import uuid
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from PySide6.QtCore import QThread, Signal
 
+from .. import knowledgestore as store
 from .. import sceneclock as sc
 from .. import scenestore as scenestore_mod
 from ..engine import SceneEngine
 from ..i18n import DEFAULT_LANGUAGE, Translator
+from ..loaders import list_character_paths, load_character_card
 #: 活跃度缺省档（§6.2）：与设置里的口径**同一处**（settings 是四档值的唯一定义处，
 #: 这里只读它的常量，绝不复制一份——两处各写一个 0.5 迟早会漂）。
-from .settings import DEFAULT_NARRATE_ACTIVITY
+from .settings import DEFAULT_NARRATE_ACTIVITY, DEFAULT_STREAM_SPEAK, SettingsStore
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +105,83 @@ _READY_TIMEOUT = 10.0
 
 #: 虚拟钟广播/收束检查的节拍（秒）。
 _V_TICK_S = 0.5
+
+
+def _default_libraries_root() -> Path:
+    """信息库根的缺省落点：**仓库（安装目录）下的 `app/libraries`**（§13.3）。
+
+    与 `gui/app.py` 定位素材（scenes/characters/config）用的是**同一套 `parents[3]`
+    惯例**——两个模块同深度，写死别的层级日后打包迁移会各指一处。本期信息库就落在
+    仓库内、与 `app/characters/` 同级；打包方案实施时它随其余用户数据一起搬。
+    """
+    return Path(__file__).resolve().parents[3] / "libraries"
+
+
+#: 缺省信息库根（模块常量；`SceneWorker.libraries_root` 由它初始化，见那里的可覆盖说明）。
+_DEFAULT_LIBRARIES_ROOT = _default_libraries_root()
+
+
+def _seed_card_libraries(paths: Sequence[Path | str] | None,
+                         root: Path | None,
+                         characters_dir: Path | None = None) -> list[Any]:
+    """把这一场**可能用到的每一张卡**上的 `knowledge_seed` 播进各自的角色库（§9.1 第二步）。
+
+    播种范围 = 显式装载的那几张 + **角色库目录里其余的卡**（`characters_dir`）。后者不是
+    顺手多播：引擎运行期能从角色库按需装人（GUI 的「添加角色」→ `add_character`，§3.2），
+    这些人若从没被播种，一旦第一次散场结算把本体库建出来（结算保留会把本场副本并进本体，
+    从而**创建**本体库），`seed_from_card` 的"库已存在即整段跳过"就让他们的种子**永远**
+    播不进去——不是没播，是播不进去了。而他们的边界文字已随 §9.1 从提示词撤除，于是
+    "内容还在卡上、运行时却已经死了"。故这里先把力所能及的都播上，代价只是多读几个文件。
+
+    只在**库还不存在**时写入（`knowledgestore.seed_from_card` 保证幂等）：老卡上的
+    `knowledge_boundary` 一次用完之后留在卡上也无害，第二次不再播种——覆盖等于把角色
+    这一路长出来的见识抹回出厂状态。
+
+    没有信息库根（关掉开关 / 调用方显式传 None）→ 什么都不做。读卡失败（路径不存在、
+    JSON 坏）只记一笔日志并跳过：播种是**旁挂动作**，绝不该拦住开场——真正要用这张卡的
+    引擎随后会自己报出更准确的错。播种**丢弃/改造了什么**一律进日志（§4.3：绝不静默）。
+    """
+    if root is None:
+        return []
+    targets: list[Path] = []
+    seen: set[Path] = set()
+    for path in list(paths or ()) + list(_directory_cards(characters_dir)):
+        p = Path(path)
+        if p not in seen:
+            seen.add(p)
+            targets.append(p)
+    results: list[Any] = []
+    for path in targets:
+        try:
+            card = load_character_card(path)
+        except Exception as exc:            # 坏卡/缺文件不拦开场（引擎那边还会再报一次）
+            logger.debug("跳过播种 %s：%s", path, exc)
+            continue
+        try:
+            res = store.seed_character_library(card, root=Path(root))
+        except Exception as exc:            # 磁盘满/权限：旁挂动作只记日志
+            logger.warning("为「%s」播种信息库失败（开场照常）：%s",
+                           getattr(card, "name", "?"), exc)
+            continue
+        for line in getattr(res, "warnings", ()) or ():
+            logger.warning("信息库播种（%s）：%s", getattr(card, "name", "?"), line)
+        results.append(res)
+    return results
+
+
+def _directory_cards(directory: Path | None) -> list[Path]:
+    """角色库目录下的全部卡文件（排序）；没有目录 / 扫描失败 → 空列表。**绝不抛。**
+
+    与引擎按需装卡用的是同一个扫描（`loaders.list_character_paths`）：引擎能从那里装到谁，
+    这里就该把谁的种子播上——两处各写一套扫描迟早会有一边漏人。
+    """
+    if directory is None:
+        return []
+    try:
+        return list(list_character_paths(Path(directory)))
+    except OSError as exc:                  # 目录不存在/权限：不是错误，只是没得播
+        logger.debug("扫描角色库目录失败（跳过其余卡的播种）：%s", exc)
+        return []
 
 
 def closing_text(desc: str | None, language: str = DEFAULT_LANGUAGE) -> str:
@@ -103,6 +197,35 @@ def closing_text(desc: str | None, language: str = DEFAULT_LANGUAGE) -> str:
     if text:
         return tr.t("scene.boundary_closing", desc=text)
     return tr.t("scene.boundary_closing_default")
+
+
+def _settlement_outcome(reports: dict | None) -> tuple[list[str], list[str]]:
+    """引擎那批 `SettleReport` → `(结清的, 没结清的)` 两份角色名（**纯函数**，便于单测）。
+
+    判据是**引擎真的做成了什么**，不是用户点了什么：
+
+      · `repeated=True` → 这一场先前已经结过账（先到先得，§7.5），本次是空操作；引擎的
+        `pending_settlement()` 那时也不列他，故算结清；
+      · `outcome == "keep"` 且 `merged.persisted` → 真的并进了本体库，算结清；
+      · `outcome == "discard"` → 丢弃那条路没有可失败的东西，永远标得上，算结清；
+      · 其余（`persisted=False`：有该并的没并进去/一个字都没落盘；或者认不出来的决定、
+        不在演员表里等只带 warnings 的报告）→ **没结清**，这一场仍是待结算。
+
+    没结清的人留在待决名单里，是刻意的：引擎的报告正叫用户"处理好之后可以再结一次"，
+    界面把重试入口关掉就等于让这一场的所得永远卡在副本里、只剩 CLI 救得回来。
+
+    名字顺序按报告给的顺序（引擎按 decisions 的顺序产出），界面文案才稳定。
+    """
+    settled: list[str] = []
+    unsettled: list[str] = []
+    for name, report in (reports or {}).items():
+        repeated = bool(getattr(report, "repeated", False))
+        outcome = str(getattr(report, "outcome", "") or "")
+        merged = getattr(report, "merged", None)
+        persisted = bool(getattr(merged, "persisted", True))
+        done = repeated or outcome == "discard" or (outcome == "keep" and persisted)
+        (settled if done else unsettled).append(str(name))
+    return settled, unsettled
 
 #: App 端不再按块数收束场景：传给引擎 world 的块钟兜底上限架空为不会触发的极大值，
 #: 场景正常收束只由虚拟钟走到打烊边界决定（见 _v_ticker_loop）。保留该参数仅为
@@ -126,6 +249,9 @@ _IDLE_TEXT = "等待中…可随时插话"
 #: _emit_think 每轮读取 think 只读边通道的尾部上界——正常场景经 500 块成本守卫
 #: 反复自动暂停，累计 think 远到不了该量级；只是防极端长跑的读拷贝失控。
 _THINK_READ_BOUND = 10**6
+
+#: _emit_speak_stream 每拍读取流式接收器的尾部上界（同 _THINK_READ_BOUND 的理由）。
+_SPEAK_READ_BOUND = 10**6
 
 
 def build_scene_payload(engine: SceneEngine) -> dict:
@@ -222,6 +348,29 @@ class SceneWorker(QThread):
     # + **活场景字段**（被 hook/场景工具改过之后就是改后的样子）+ 隐式事件流尾部。
     # 只在内容变化时广播一次——界面据此刷新场景卡并让此前无处可看的诊断可见。
     sig_scene_diag = Signal(dict)
+    # 散场结算待决（§7.4/§8.3）：载荷 `{"characters": [行…], "warnings": [说话…]}`——行是
+    # 引擎 `settlement_rows()` 算出来的**事件同形**载荷，警告取自引擎 `settlement_warnings()`。
+    # 没待决内容时**不发**（界面据此不弹窗，绝不打扰）。主窗口在主线程开窗问用户。
+    sig_settlement_pending = Signal(dict)
+    # 离场挂起（§7.3）：某角色离场、有本场所得待结算——**非打断**的一条提示（状态栏/chip），
+    # 绝不弹窗（用户正在看戏）。载荷 = 一行待结算数据（`events.settlement_row` 同形）。
+    sig_settlement_hint = Signal(dict)
+    # 结算回执（§7.2）：用户决定已经执行完，载荷 {"decisions": {名: 决定}, "warnings": […]}。
+    sig_settlement_applied = Signal(dict)
+    # ---- 流式开口（§二）：speak 正文的增量 ----
+    #: 一个流式片：载荷 {"speaker": 名, "text": 这一片, "turn": n, "seq": n}。界面据此
+    #: 建/追加**临时气泡**（"正在说"），收到该块正式消息时就地定稿。
+    sig_speak_delta = Signal(dict)
+    #: 一块说完了：载荷 {"speaker": 名, "settled": bool, "turn": n, "seq": n}。
+    #: `settled=False` = 这一块**没有**正式消息落地（近重复被整块作废）→ 界面必须撤掉
+    #: 临时气泡，绝不留半条；`settled=True` = 正式消息在路上（等着就地定稿）。
+    sig_speak_end = Signal(dict)
+
+    #: 信息库根（§13.3）：缺省 = 仓库内的 `app/libraries`（与 `gui/app.py` 定位素材同一套
+    #: `parents[3]` 惯例，见 `_default_libraries_root`）。留在**类属性**上是为了可覆盖：
+    #: 测试（隔离夹具不许任何用例往仓库里播种）与将来的「用户数据目录」迁移都只改这一处，
+    #: 不必碰模块常量、更不必新增一条推送通道。
+    libraries_root: Path | None = _DEFAULT_LIBRARIES_ROOT
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -292,6 +441,23 @@ class SceneWorker(QThread):
         self.demo_alternate = True
         # think 只读日志已派发到的最大 seq（引擎封顶裁剪不影响增量派发；每场从 -1 起）。
         self._last_think_seq = -1
+        #: speak 流式接收器已派发到的最大 seq（同 _last_think_seq 的纪律；**每场必须归零**，
+        #: 见 _launch——游标的生命周期挂在引擎实例上，而引擎是每场换一个的）。
+        self._last_speak_seq = -1
+        #: 流式开口开关的**权威期望值**（loop 线程读写；与 _auto_narrate 同纪律）——
+        #: GUI 侧设置项只是它的镜像，权威值记在这里，建引擎时带上（重开/切场不丢）。
+        #: 缺省取产品缺省（`settings.DEFAULT_STREAM_SPEAK`，现为**开**）：裸 worker（不经过
+        #: 窗口）也该与用户装到的一致。要"不开启时逐字节不变"的那条不变量请显式传 False
+        #: —— 它由引擎/图的低层缺省守着，不由这里守。
+        self._stream_speak = DEFAULT_STREAM_SPEAK
+        #: 场景跳时间开关（§四）的**权威期望值**（同 _stream_speak 的纪律）：缺省关，
+        #: 建引擎时带上（重开/切场不丢）。开启后引擎按四道闸决定跳不跳，只有**放行**的
+        #: 那条叙述行带 clock_jump_minutes，worker 派发它时把虚拟钟前推（见 _apply_clock_jump）。
+        self._time_skip = False
+        #: 已经推过钟的跳时间行：{消息 id: 分钟数}。撤回/改写把这类行作废时，按这份账把
+        #: 那段时间**从虚拟钟里收回来**（见 _rewind_retracted_jumps）——转录说"这段没发生过"，
+        #: 钟就不能还停在被推过去的时刻上。没有记账就无从知道该收多少（也防重复收）。
+        self._jump_applied: dict[int, int] = {}
         # ---- 场景外壳（S4b §5/§7）：语言与自动保存周期的**期望值**（loop 线程读写）----
         # 与 _auto_narrate 同纪律：GUI 侧设置项只是镜像，权威期望值记在这里，建引擎时
         # 带上（重开/切场不丢）；改设置一律经 _submit/_post_call 落到 loop。
@@ -304,6 +470,16 @@ class SceneWorker(QThread):
         self._api_base_url = ""
         self._api_key = ""
         self._model_override = ""
+        # ---- 散场结算（§7.2/§7.3，loop 线程读写）----
+        #: 已派发到的「隐式待结算事件」条数：引擎在离场时把一条 `event_kind ==
+        #: "pending_settlement"` 的隐式事件挂进只读事件流，这里按索引增量转成
+        #: sig_settlement_hint（与 _last_scene_change 同一纪律）。它数的是**当前这一场
+        #: 那条事件流**里的序号，故两条重置路都必须走：事件流被清空（`_reset_scene`）时
+        #: 由下面的倒挂判据回零，换成新引擎（`_launch`）时由那里显式清零——只做前一条的话，
+        #: 新场里序号比它小的离场提示会被静默吞掉。
+        self._settlement_hint_seen = 0
+        #: 最近一份待决清单的行（名 → 行），供界面侧的镜像/回执核对（只读镜像）。
+        self._pending_settlement: dict[str, dict] = {}
 
     # ------------------------------------------------------------------ QThread
     def run(self) -> None:  # noqa: D102  (QThread 入口，运行于本线程)
@@ -469,6 +645,36 @@ class SceneWorker(QThread):
             return
         self._post_call(self._apply_narrate_activity, value)
 
+    def set_speak_stream(self, on: bool) -> None:
+        """流式开口开关（§二．8，设置里的可勾选项）：记期望值 + 立即改活引擎。
+
+        与 set_auto_narrate 同纪律：可被随时点（含开场前/线程未起），线程未起则只记期望值
+        （此刻仍在 GUI 线程单线程阶段），绝不把异常抛进 GUI 槽；建引擎时带上期望值，故
+        **重开/切场也不丢**。开关**缺省关**（见 settings.DEFAULT_STREAM_SPEAK 的理由）：
+        不开启时 speak 仍走今天那一句 complete_text，一切逐字节相同。
+        """
+        if self._quitting:
+            return
+        if self._loop is None or not self._ready.is_set():
+            self._stream_speak = bool(on)
+            return
+        self._submit(self._set_speak_stream(bool(on)))
+
+    def set_time_skip(self, on: bool) -> None:
+        """场景跳时间开关（§四，设置里的可勾选项）：记期望值 + 立即改活引擎。
+
+        与 set_speak_stream 同纪律：可被随时点（含开场前/线程未起），线程未起则只记
+        期望值（此刻仍在 GUI 线程单线程阶段），绝不把异常抛进 GUI 槽；建引擎时带上期望值，
+        故**重开/切场也不丢**。缺省关：不开启时引擎连 bid 都不采样、提示词里也没有那一块
+        （逐字节回到加这个特性之前）。
+        """
+        if self._quitting:
+            return
+        if self._loop is None or not self._ready.is_set():
+            self._time_skip = bool(on)
+            return
+        self._post_call(self._apply_time_skip, bool(on))
+
     def narrate_now(self) -> None:
         """「推进一下」：手动让场景推进一步（无视 cooldown 与自动开关）。"""
         self._submit(self._narrate_now())
@@ -573,14 +779,18 @@ class SceneWorker(QThread):
     def schedule_cast_change(self, character_name: str, action: str,
                              fire_after_rounds: int,
                              notify: list[str] | None = None, notify_text: str = "",
-                             visible: bool = True, turns: int = 0) -> None:
+                             visible: bool = True, turns: int = 0,
+                             reason: str = "") -> None:
         """预约延时角色动作（§2.1④ 高级移入/移出）：fire_after_rounds 块后到期执行。
 
         action ∈ add/remove/mute_turns/mute/unmute；turns 仅 mute_turns 用（S4a 增补）。
+        reason（§5.1）：进离场原因，随动作一起入队、到期按方向交付（详见引擎侧）；留空 =
+        与今天逐字节相同（引擎一个字都不落）。
         """
         self._submit_cast(lambda: self._schedule_cast_change(
             str(character_name), str(action), int(fire_after_rounds),
-            list(notify or []), str(notify_text), bool(visible), int(turns)))
+            list(notify or []), str(notify_text), bool(visible), int(turns),
+            str(reason or "")))
 
     def can_cast(self) -> bool:
         """GUI 可改人事的判据（同步、只读镜像）：引擎在且 worker 未在退出。
@@ -597,12 +807,79 @@ class SceneWorker(QThread):
         """
         return bool(self._open)
 
+    # ---- 散场结算（§7.2/§7.4）：决定由主线程回传，执行落在引擎 loop ----
+    def settlement_rows(self) -> list[dict]:
+        """只读镜像：最近一份待决清单（名 → 行）的行表（供界面建菜单项/核对）。"""
+        return [dict(row) for row in self._pending_settlement.values()]
+
+    def apply_settlement(self, decisions: dict[str, str]) -> None:
+        """把用户对散场结算的决定回传给引擎（§7.2/§7.4）。
+
+        `decisions` = {角色名: "keep"|"discard"}（引擎也认中文）。GUI 线程绝不直接碰引擎：
+        经 `_submit_cast` 投到引擎 loop（内部 `run_coroutine_threadsafe`），执行完发
+        `sig_settlement_applied` 回执。**幂等**由引擎侧保证（§7.5 先到先得）——界面重复投递
+        同一个决定不会翻盘。
+
+        空决定表直接丢掉：一次没有内容的"确定"不该在引擎那边留下一条空结算。
+        """
+        decisions = {str(k): str(v) for k, v in (decisions or {}).items()}
+        if not decisions:
+            return
+        self._submit_cast(lambda: self._apply_settlement(decisions))
+
+    async def _apply_settlement(self, decisions: dict[str, str]) -> None:
+        """引擎 loop 上执行结算：调 `engine.apply_settlement` → 冲刷 → 发回执。
+
+        引擎声明"绝不抛"（单个角色失败只进那一份报告的 warnings），这里仍兜一层：一次
+        结算的意外不该把未取回的异常抛进 Qt 的槽（PySide 对它致命）。成功与否都发回执，
+        界面据此把提示/菜单项的状态收干净。
+
+        **回执按引擎真正做成的算**（§7.2/§7.5）：`settled` 只收"引擎确认结清了"的那些人，
+        没并进去的（`merged.persisted is False`——条目被挡下、写盘失败、归档放不下）留在
+        `unsettled` 里，界面的待决名单**不收**他们、重试入口照样开着。引擎在那种情况下正是
+        叫用户"处理好之后再结一次"，界面把入口关掉就等于让这一场的所得永远卡在副本里。
+        `repeated=True`（这一场先前已经结过账，先到先得）算已结清：引擎的
+        `pending_settlement()` 那时也不再列他，两边口径一致。
+        """
+        engine = self._engine
+        if engine is None or self._quitting:
+            return
+        try:
+            async with self._oplock:
+                if self._engine is None:
+                    return
+                reports = engine.apply_settlement(dict(decisions))
+                settled, unsettled = _settlement_outcome(reports)
+                for name in settled:
+                    self._pending_settlement.pop(name, None)
+                await self._flush(engine)
+            warnings = [w for report in (reports or {}).values()
+                        for w in (getattr(report, "warnings", ()) or ())]
+        except Exception as exc:             # noqa: BLE001 - 绝不冒泡进 GUI 槽
+            self._emit_status(
+                Translator(self._language).t("status.settlement_failed", exc=exc))
+            return
+        self.sig_settlement_applied.emit(
+            {"decisions": dict(decisions), "warnings": [str(w) for w in warnings],
+             "settled": settled, "unsettled": unsettled})
+
     def shutdown(self, wait_ms: int = 8000) -> None:
-        """优雅收尾：在 loop 上撤 autoplay + ticker + aclose 引擎 + loop.stop，再 join。"""
-        loop = self._loop
+        """优雅收尾：在 loop 上撤 autoplay + ticker + aclose 引擎 + loop.stop，再 join。
+
+        **必须等 loop 就绪再判**：`start()` 返回后到 `run()` 里把 `_loop` 建好、`_ready`
+        置位之间有一段极短的窗口（Qt 起线程、Python 建 loop 都要时间）。在窗口里调到这里，
+        原先的写法读到 `self._loop is None` 就把"投 teardown"整段跳过，于是只做了一次
+        `wait(wait_ms)`——而 `run_forever` 没有别的出口，等不到就永远不出来：线程、事件
+        循环、引擎（sqlite 连接）全都吊着不关，此后每次 close 再漏一份。这些"永不退出"
+        的 worker 线程又会在进程里持续跑 asyncio 轮询，是测试进程被掀翻的一条来路。
+        故这里先等就绪（`run()` 在 `run_forever` 之前置位，故等到了 loop 一定非 None），
+        再投 teardown；投递失败只由 `wait` 的返回值体现（调用方自行决定是否在意）。
+        """
         if not self.isRunning():
             return
-        if loop is not None and self._ready.is_set() and not self._quitting:
+        self._ready.wait(_READY_TIMEOUT)     # 越过启动竞态窗口（正常路径下立即返回）
+        loop = self._loop
+        if loop is not None and not self._quitting:
             with contextlib.suppress(Exception):
                 asyncio.run_coroutine_threadsafe(self._teardown(), loop)
         self.wait(wait_ms)
@@ -629,6 +906,22 @@ class SceneWorker(QThread):
         if cfg["live"] and api_key:
             models = models.with_name("models.live.yaml")  # 真实后端（DeepSeek）
         # live 而无 key：保持 models.yaml(stub)，不崩（同 runner --demo 语义）。
+        # ---- 信息库（§9.1 第二步 / §13.3）----
+        # ① 播种：老卡上的 `knowledge_boundary` 在这一刻真的变成库里的条目（库已存在则跳过，
+        #    幂等）。放在**建引擎之前**：引擎开场即按需建本场副本，副本的源就是本体库，
+        #    播种晚一步这一场就捞不到那份种子。播的是"这一场可能用到的每一张卡"——本场装载
+        #    的 + 角色库目录里其余的（随时可能被「添加角色」请进场的人）。
+        # ② 把根与开关交给引擎：根缺省 = app/libraries；开关关 = 与没有信息库同义（§10.2）。
+        knowledge_enabled = self._knowledge_enabled()
+        libraries_root = (Path(self.libraries_root)
+                          if self.libraries_root is not None else None)
+        if knowledge_enabled:
+            # 关了就别建库：用户关掉检索就是"退回今天"，那连一座新库都不该冒出来
+            # （卡上的种子照旧留着，什么时候开回来什么时候播，一条都不会丢）。
+            # 带上 characters_dir：引擎运行期能从那里按需装人（「添加角色」），他们的
+            # 种子也得先播上，否则第一次散场结算就会把本体库以残缺内容建出来。
+            _seed_card_libraries(characters, libraries_root,
+                                 Path(characters_dir) if characters_dir else None)
         return SceneEngine(
             cfg["scene"], cfg["characters"], models,
             run_root=run_root, bid_path=cfg["bid"], api_key=api_key,
@@ -649,7 +942,30 @@ class SceneWorker(QThread):
             autosave_every=int(self._autosave_every),
             # 推进活跃度（§6.2）：期望值在建引擎时带上（重开/切场不丢）；用户改档后由
             # set_narrate_activity 就地改活引擎，这里只管"下一场从哪一档开始"。
-            narrate_activity=float(self._narrate_activity))
+            narrate_activity=float(self._narrate_activity),
+            # 流式开口（§二）：期望值在建引擎时带上（重开/切场不丢）；用户改开关后由
+            # set_speak_stream 就地改活引擎，这里只管"下一场从哪一档开始"。
+            stream_speak=bool(self._stream_speak),
+            # 场景跳时间（§四）：期望值在建引擎时带上（重开/切场不丢）；用户改开关后由
+            # set_time_skip 就地改活引擎，这里只管"下一场从哪一档开始"。
+            time_skip_enabled=bool(self._time_skip),
+            # 信息库（§13.3）：根 = app/libraries；开关来自用户设置（读一次见
+            # _knowledge_enabled —— 「设置里改完 → 下一场（重）开就生效」）。
+            libraries_root=libraries_root,
+            knowledge_enabled=knowledge_enabled)
+
+    def _knowledge_enabled(self) -> bool:
+        """「信息库检索 开/关」（§10.2）：建引擎时**就地读一次用户设置**。
+
+        与 api 配置（main_window → `set_api_config` 推给 worker）不同，这个开关走的是
+        "就地读一次设置文件"：口径与其余设置项一致（设置里改完 → 下一场（重）开就生效），
+        也不必为它新增一条推送通道。**读盘失败/文件损坏一律回落默认（开）**：
+        `SettingsStore.load` 自己声明绝不抛，这里再兜一层——读设置绝不该把开场拦住。
+        """
+        try:
+            return bool(SettingsStore().load().knowledge_enabled)
+        except Exception:                    # noqa: BLE001 - 与 SettingsStore.load 同一纪律
+            return True
 
     async def _launch(self, opening: str | None) -> None:
         """建引擎 + 开场 + 起真实流速虚拟钟 + 广播一次场景信息 + 起 autoplay/ticker。
@@ -690,6 +1006,13 @@ class SceneWorker(QThread):
         self._boundary_desc = None          # 新场的边界描述随后由本场引擎回填
         self._scene_diag_sig = None         # 新场：场景诊断去重签名从零起
         self._last_scene_change = -1        # 新引擎的变更流是新的 list → 索引从零起
+        # 离场提示的计数器与待决镜像同样按"新引擎 = 新事件流"归零：`_settlement_hint_seen`
+        # 是**隐式事件流里的序号**，跨场留着它，新场里前几条离场提示会被当成"已经派过的"
+        # 整段吞掉（`pending[seen:]` 从中间切）。上一场离场 ≥1 人、新场头一块里离场人数更多
+        # 时就会命中。`_pending_settlement` 同清：副本是逐场一份的（新 run_root），上一场的
+        # 账在新场不作数（主窗口换场时也是这么清的）。
+        self._settlement_hint_seen = 0
+        self._pending_settlement = {}
         self._autoplay_blocks = 0           # 新场景/重开 → 成本守卫计数清零重计
         self._set_auto_pause(False)         # 新场：旧场若停在守卫暂停态，这里解除并广播
         self._pause_visible = False
@@ -698,6 +1021,11 @@ class SceneWorker(QThread):
         self._backend_err = False
         self._silence_streak = 0            # 静默容忍窗口清零
         self._last_think_seq = -1           # 新引擎 think 日志从首条起派发
+        # 流式接收器的游标同归零：新引擎是**新的 list**（seq 从 1 重新起算），留着上一场
+        # 的位置，新场开头那几片会被当成"已经派过了"整段吞掉——界面上就是"角色明明在说，
+        # 气泡却半天不出来"。同类计数器（_settlement_hint_seen / _last_scene_change）都是
+        # 这个道理，别再犯。
+        self._last_speak_seq = -1
         # 旧引擎（若有）先关：切场走的就是这条路径（start_scene 再投一次 launch），
         # 与 _restart 同纪律——持锁取出再 aclose，绝不把旧场的 sqlite 连接留在身后。
         old = self._engine
@@ -720,6 +1048,7 @@ class SceneWorker(QThread):
                     raise _SupersededLaunch()
                 self._engine = engine
                 self._seen = 0
+                self._jump_applied.clear()   # 新场新钟：上一场的跳时间记账随旧引擎作废
                 self._paused = False
                 self._open = True
                 # 虚拟钟开场即此刻：rate 沿用最近一次流速（缺省 1.0）。
@@ -863,6 +1192,30 @@ class SceneWorker(QThread):
             setter(self._narrate_activity)
         self._emit_narration()
 
+    async def _set_speak_stream(self, on: bool) -> None:
+        """（loop 线程）改流式开关：先记期望值（建/重建引擎时带上），引擎在则立即落地。
+
+        引擎侧改的是一个旗标，**下一块**的 speak 即走（或不再走）流式通道；关掉之后再打开
+        同样立即生效（不必重开一场）。替身引擎（测试）没有这个方法 → 跳过，不炸 loop。
+        """
+        self._stream_speak = bool(on)
+        engine = self._engine
+        setter = getattr(engine, "set_speak_stream", None)
+        if setter is not None:
+            setter(self._stream_speak)
+
+    def _apply_time_skip(self, on: bool) -> None:
+        """（loop 线程）改跳时间开关：先记期望值（建/重建引擎时带上），引擎在则立即落地。
+
+        引擎侧改的是一个旗标：**下一块**起不再采样 bid、不再认 `[[SKIP:…]]` 指令、提示词
+        里也不再附那一块。替身引擎（测试）没有这个方法 → 跳过，不炸 loop。
+        """
+        self._time_skip = bool(on)
+        engine = self._engine
+        setter = getattr(engine, "set_time_skip_enabled", None)
+        if setter is not None:
+            setter(self._time_skip)
+
     async def _set_language(self, code: str) -> None:
         """（loop 线程）改语言：先记期望值（建/重建引擎时带上），引擎在则同步落地。
 
@@ -971,6 +1324,10 @@ class SceneWorker(QThread):
         引擎把每条现存消息记进 retracted（视图层语义与逐条撤销一致），这里**逐 id 发
         sig_retracted**：界面据此把对白区摘空（窗口按 id 摘行，没有"整屏清空"这条通路）。
         随后 flush 广播 sig_cast，并重新武装 autoplay——空场之后世界照常继续。
+
+        **虚拟钟不倒退**（决策，与既有口径一致：重置只清运行上下文，钟的持有者仍是这里、
+        走的还是真实流逝 × 流速）：故跳时间的记账一并划掉而**不**收回那些分钟——重置后
+        钟停在原处（引擎侧的频次/冷却计数器则按"新的一场"归零，见 reset_scene_runtime）。
         """
         engine = self._engine
         if engine is None or self._quitting:
@@ -984,6 +1341,7 @@ class SceneWorker(QThread):
             await self._flush(engine)
             self._armed = True
             self._silence_streak = 0
+            self._jump_applied.clear()       # 划掉旧账：那些行已作废，别再被重复收回
         for mid in [m.get("id") for m in before if m.get("id") is not None]:
             self.sig_retracted.emit(int(mid))
         self._emit_narration()
@@ -1008,18 +1366,28 @@ class SceneWorker(QThread):
         §6.1：撤回是截断式的——该条**及其之后同一场景内的所有消息**一起作废，故这里
         把引擎报回来的整段 id 逐个 emit（界面按 id 摘行，没有"整屏清空"这条通路）。
         替身引擎（测试）返回 None 时退化为只报被点的那一条。
+
+        作废的那段里若有跳时间行，虚拟钟跟着**收回来**（见 `_rewind_retracted_jumps`）：
+        转录与钟必须对同一套事实说话。
         """
         engine = self._engine
         if engine is None or self._quitting:
             return
         async with self._oplock:
             ids = await engine.retract(mid)
+        self._rewind_retracted_jumps(ids or [mid])
         for i in (ids or [mid]):
             self.sig_retracted.emit(int(i))
         self._emit_narration()
 
     async def _edit_narration(self, mid: int, text: str) -> None:
-        """（loop 线程）改写一条叙述：截断到该节点（含其后全部下文）+ 新行 flush 上屏。"""
+        """（loop 线程）改写一条叙述：截断到该节点（含其后全部下文）+ 新行 flush 上屏。
+
+        改写一条**跳时间行**时，旧的那一跳跟着这次截断作废：虚拟钟按 `_jump_applied`
+        收回（同逐条撤回）。改写后的正文**不再自动推钟**——改写是用户的手笔，引擎不替
+        用户把正文里的钟点解释成一次跳跃（要跳就再让场景提一次提案）。钟因此回到"那一跳
+        之前"，与新正文里写的时间不再叠加上一次旧的偏移。
+        """
         engine = self._engine
         if engine is None or engine.closed or self._notified or self._quitting:
             return
@@ -1034,6 +1402,7 @@ class SceneWorker(QThread):
             after = set((engine.narration_state() or {}).get("retracted") or [])
             ids = sorted(after - before) or [int(mid)]
             await self._flush(engine)
+        self._rewind_retracted_jumps(ids)      # 被改写作废的跳时间行：钟收回来
         for i in ids:                          # 旧行及其后全部下文作废 → 窗口逐行摘掉
             self.sig_retracted.emit(int(i))
         self._emit_narration()
@@ -1086,12 +1455,13 @@ class SceneWorker(QThread):
     async def _schedule_cast_change(self, character_name: str, action: str,
                                     fire_after_rounds: int, notify: list[str],
                                     notify_text: str, visible: bool,
-                                    turns: int) -> None:
+                                    turns: int, reason: str = "") -> None:
         await self._cast_op(
             "预约角色动作",
             lambda: self._engine.schedule_cast_change(
                 character_name, action, fire_after_rounds, notify=notify,
-                notify_text=notify_text, visible=visible, turns=turns))
+                notify_text=notify_text, visible=visible, turns=turns,
+                reason=reason))
 
     async def _stop_now(self) -> None:
         """引擎 loop 上执行停止：持锁收束 + 停 autoplay/ticker，杜绝「已停止」之后
@@ -1233,6 +1603,11 @@ class SceneWorker(QThread):
                     await self._finalize("已收束", reason="引擎块兜底收束",
                                          close_engine=False, closing_content=None)
                     return
+                # 流式片（§二）：本拍把引擎接收器里新到的片派给界面。放在收束判据之前、
+                # 且在**暂停态也照走**——说话与虚拟钟走不走无关（暂停住钟不等于让已经说
+                # 出口的半句卡在引擎里）。autoplay 此刻可能正 await 在 engine.step 上，
+                # 正是靠这一拍把"正在说"送出去。
+                self._emit_speak_stream(engine)
                 if self._paused:
                     clock.freeze()           # 冻结：暂停期间钟不动
                     self.sig_metrics.emit(self._metrics_snapshot())
@@ -1307,9 +1682,89 @@ class SceneWorker(QThread):
                 self.sig_message.emit(self._stamp(line))
             self.sig_metrics.emit(self._metrics_snapshot())
             self._emit_narration()           # 终态再广播一次（状态行不停在上次块）
+            await self._prepare_settlement(engine)
         self._log_close_reason(reason)
         self._emit_status(status)
         self.sig_finished.emit()
+
+    async def _prepare_settlement(self, engine: SceneEngine) -> None:
+        """收尾时**显式**把引擎侧的散场结算准备好（§7.4），并把待决清单转成信号。
+
+        CLI 早就这么做了（`runner._settle_after_scene`），GUI 这条收尾路此前一步都没走，
+        于是角色这一场的所得永远停在副本里。这里与 CLI 同一口径：**收束了才准备**（未收束
+        的一步都不该写散场总结），且 `prepare_settlement` 自己声明幂等、绝不抛——戏还没演
+        起来、没有信息库、没有所得时它立刻返回空映射。
+
+        准备完就发 `sig_settlement_pending`（主线程据此开窗）。**没有待决内容时不发**：
+        界面据此不弹窗（绝不打扰），无信息库时既有信号序列因此与今天逐字节相同。
+
+        仍再兜一层 try/except：收尾这条路绝不该因为"准备结算"失败而中断（状态与 finished
+        信号必须发出去，否则界面永远停在"进行中"）。
+        """
+        try:
+            if not engine.closed:
+                return
+            await engine.prepare_settlement()
+            self._emit_settlement_pending(engine)
+        except Exception:                    # noqa: BLE001 - 收尾绝不因它中断
+            logger.exception("收尾时准备散场结算失败（收束照常，所得仍待结算）")
+
+    def _emit_settlement_pending(self, engine: SceneEngine) -> None:
+        """把引擎的待决清单转成 `sig_settlement_pending`（§7.4/§8.3）。**没有内容就不发。**
+
+        清单照抄引擎 `settlement_rows()`（与 `settlement_pending` 事件同一形状、同一出处），
+        警告照抄 `settlement_warnings()`——弹窗那一侧一条都不自己算。两份都读不到时静默跳过
+        （只读镜像 + 兜底，与 `_emit_scene_diag` 同纪律）：一次"准备结算"的读盘意外不该把
+        收尾信号链带塌。
+
+        **警告先读、且不被空清单挡掉**（§7.4 "绝不静默"）：有人账记着但这次收不上来时
+        （副本里那条条目文件坏了），`settlement_rows()` 是空的（没有可看的东西），而
+        `settlement_warnings()` 那句"他的库少了一条"就是用户唯一的知情渠道——空清单直接
+        return 会把这句话连同整条通道一起吞掉，用户以为散场一切正常，角色的知识却永远
+        并不进本体库。故空清单 + 有警告也发（界面只落日志/状态区，绝不开窗）。
+        """
+        try:
+            rows = [dict(r) for r in engine.settlement_rows() if isinstance(r, dict)]
+        except Exception:                    # noqa: BLE001 - 替身引擎/半建引擎读不到
+            logger.exception("读取待结算清单失败，跳过本轮 sig_settlement_pending")
+            return
+        try:
+            warnings = [str(w) for w in engine.settlement_warnings()]
+        except Exception:                    # noqa: BLE001
+            warnings = []
+        if not rows and not warnings:
+            return                           # 真的没话说：不弹窗、不发信号（绝不打扰）
+        for row in rows:
+            self._pending_settlement[str(row.get("name") or "")] = row
+        self.sig_settlement_pending.emit({"characters": rows, "warnings": warnings})
+
+    def _emit_settlement_hint(self, engine: SceneEngine) -> None:
+        """离场挂起提示（§7.3）：新出现的"某角色有待结算所得"隐式事件 → 一条非打断提示。
+
+        引擎在角色离场那一刻把 `event_kind == "pending_settlement"` 的隐式事件挂进只读
+        事件流（**不弹窗、不调模型、不写文件**）。这里按索引增量派发（同 `_emit_scene_changes`
+        的纪律）：已经派过的不再重复，免得每块刷一次提示。计数回零有两条来路——事件流被
+        清空（重置）时下面的倒挂判据兜住，换成新引擎时 `_launch` 显式清零（新引擎是新的
+        list，序号从零起；只兜前一条会让新场开头的提示被当成"派过了"吞掉）。
+        读不到事件流就静默跳过——不因替身引擎缺这个面而影响主对白派发。
+        """
+        try:
+            events = engine.implicit_events()
+        except Exception:                    # noqa: BLE001 - 替身引擎没有这条通路
+            return
+        pending = [e for e in events if isinstance(e, dict)
+                   and e.get("event_kind") == "pending_settlement"]
+        if len(pending) < self._settlement_hint_seen:
+            self._settlement_hint_seen = 0    # 事件流被重置过：从头再派
+        if len(pending) <= self._settlement_hint_seen:
+            return
+        new = pending[self._settlement_hint_seen:]
+        self._settlement_hint_seen = len(pending)
+        for event in new:
+            row = {key: event.get(key)
+                   for key in ("name", "scene", "added", "revised", "titles")}
+            self._pending_settlement[str(row.get("name") or "")] = dict(row)
+            self.sig_settlement_hint.emit(dict(row))
 
     def _log_close_reason(self, reason: str) -> None:
         """收束原因诊断：stderr 一行（终端可见），供判断场景为何停下——reason 区分
@@ -1436,6 +1891,16 @@ class SceneWorker(QThread):
                     and not self._notified and not self._v_closed):
                 self.sig_metrics.emit(self._metrics_snapshot())
 
+    def _now_hhmmss(self) -> str:
+        """当前虚拟钟的 HH:MM:SS；没有钟（未开场/替身引擎）→ 空串。
+
+        与 `_stamp` 同源（同一把钟、同一个格式化），给它单独一个名字是因为还有个非消息
+        的用处：流式收尾标记也要带时刻（见 `_emit_speak_stream`）——窗口拿它在**吐字第一帧**
+        就把时间显示出来，不必等正式消息到达。
+        """
+        clock = self._vclock
+        return sc.format_clock(clock.current()) if clock is not None else ""
+
     def _stamp(self, msg: dict) -> dict:
         """给一条派发消息补上当前虚拟钟 HH:MM:SS（time_hhmmss，取代旧图内 at_min）。"""
         clock = self._vclock
@@ -1556,6 +2021,14 @@ class SceneWorker(QThread):
         动态快照（sig_dynamics）与新增 think 日志（sig_think，人类 UI 只读边通道）。
         """
         msgs = await engine.messages()
+        # 流式片（§二）**必须排在 sig_message 之前**：这是引擎自己的时序——graph.speak
+        # 先把片与收尾标记追加进接收器，之后才把这一块交给引擎落进 messages()。反着发
+        # 的话，窗口在正式消息到达时手里还没有气泡可定稿（`_on_message` 落完正式行就
+        # 走了），紧跟着的余片会新建一条「正在说…」气泡，而 settled=True 的收尾标记按
+        # 设计不撤气泡（它等的是那条消息，可消息早过去了）→ 那句台词的尾部以幽灵气泡的
+        # 形态常驻屏上，还会把下一块同一说话人的片拼进去。块末压着的余片几乎必然存在
+        # （真模型是连续吐 token，而 ticker 每 0.5s 才读一次），故这是正常通路而非边角。
+        self._emit_speak_stream(engine)
         self._sweep(msgs)
         # 先发演员表再发数值：sig_cast 会**重画**左右栏（角色卡是新建的，实时分量先落
         # 占位），若数值先到就会被重画擦掉——顺序反了的话右栏数字会在每块之间闪空。
@@ -1563,6 +2036,7 @@ class SceneWorker(QThread):
         self._emit_side_channels(engine)
         self._emit_scene_diag(engine)       # 场景自改/诊断（G9）：内容变了才广播
         self._emit_scene_changes(engine)    # 场景自改进日志（§3.5/T1）：按索引增量
+        self._emit_settlement_hint(engine)  # 离场挂起（§7.3）：新出现的待结算隐式事件
 
     def _build_dynamics_payload(self, engine: SceneEngine) -> dict:
         """组装每轮 sig_dynamics 载荷：数值动态分量 + 数值 bid，并后向兼容保留旧 think
@@ -1582,6 +2056,53 @@ class SceneWorker(QThread):
                 if k not in st:           # 数值键优先；旧字段只补缺（后向兼容）
                     st[k] = v
         return snap
+
+    def _emit_speak_stream(self, engine: SceneEngine) -> None:
+        """增量派发 speak 流式片（§二）：`speak_stream_tail()` → sig_speak_delta / sig_speak_end。
+
+        **读法照 `_emit_side_channels` 的 think 那一段**：按条目内嵌的单调 `seq` 增量派发，
+        不用"尾部长度差"（接收器在 append 端封顶裁剪丢最旧，长度差会失灵，seq 不受影响）。
+        已读到哪记在 `self._last_speak_seq`（每场由 `_launch` 归零）。
+
+        调用点两处、缺一不可：
+          · **本方法在 ticker 的每一拍（0.5s）被调**——这才是"逐字出现"的来源：autoplay
+            正卡在 `engine.step` 里等模型时，ticker 仍在这个 loop 里跑，于是片能**边说边
+            到**界面；只在 step 之后读的话，整段话会在块的末尾一次性冒出来；
+          · `_flush` 里再调一次（**排在 `_sweep` 之前**）：块末把余下的片（含收尾标记）
+            一次派完（先后理由是"引擎先追加接收器、后落 block"，见 `_flush`），也让测试
+            与"手动推进/插话"这类同步路径有确定的收口点。
+
+        只读镜像 + try/except 兜底：替身引擎（测试）没有这个读口就当没有，绝不影响主对白
+        派发；关闭流式时接收器恒空，一次信号都不发（既有行为逐字节不变）。
+        """
+        tail_fn = getattr(engine, "speak_stream_tail", None)
+        if tail_fn is None:
+            return
+        try:
+            tail = tail_fn(n=_SPEAK_READ_BOUND)
+        except Exception:                    # noqa: BLE001 - 读口坏了不该掀翻本块
+            logger.exception("读取 speak 流式接收器失败，跳过本轮 sig_speak_delta")
+            return
+        for entry in tail:
+            seq = int(entry.get("seq", -1) or -1)
+            if seq <= self._last_speak_seq:
+                continue                     # 已经派过（ticker 与 flush 都可能读到同一批）
+            self._last_speak_seq = seq
+            speaker = str(entry.get("speaker") or "")
+            turn = int(entry.get("turn") or 0)
+            if str(entry.get("kind") or "") == "end":
+                # 收尾标记带上当前时刻（§2.4）：窗口拿它在**吐字第一帧**就显示时间，
+                # 不必等到正式消息到达才冒出来（那一帧正是用户看到的"没时间"）。
+                # 钟归 worker 持有，故只有这里能给出这个值。
+                self.sig_speak_end.emit({"speaker": speaker,
+                                         "settled": bool(entry.get("settled")),
+                                         "turn": turn, "seq": seq,
+                                         "time_hhmmss": self._now_hhmmss()})
+                continue
+            text = str(entry.get("text") or "")
+            if text:
+                self.sig_speak_delta.emit({"speaker": speaker, "text": text,
+                                           "turn": turn, "seq": seq})
 
     def _emit_side_channels(self, engine: SceneEngine) -> None:
         """一轮消息派发后补发两条旁路信号：sig_dynamics（角色数值动态 + bid）与
@@ -1614,6 +2135,10 @@ class SceneWorker(QThread):
         空 content 滤除；_seen 一律推进到全量尾部，人类行照常计数但不 emit。
         不再做「同人连说 N 句」刹车——发言权已交数值竞价（recency 惩罚 + 沉默压力
         自然纠偏），无计数器介入。
+
+        场景跳时间行（§4.3，带 `clock_jump_minutes`）**先把虚拟钟前推到那一跳的时刻，
+        再派发这条行**——于是行上的 `time_hhmmss` 就是"之后"的时刻，与正文「30 分钟之后」
+        对得上。钟的持有者仍是这里（图与引擎不持钟，既有分工不变）。
         """
         total = len(msgs)
         for m in msgs[self._seen:total]:
@@ -1621,8 +2146,57 @@ class SceneWorker(QThread):
                 continue                # GUI 已画过「你」气泡，这里不二次派发
             if not (m.get("content") or "").strip():
                 continue
+            self._apply_clock_jump(m)
             self.sig_message.emit(self._stamp(m))
         self._seen = total
+
+    def _apply_clock_jump(self, msg: dict) -> int:
+        """按一条叙述行上的钟偏移把虚拟钟前推（§4.3），返回推进的分钟数（0 = 没跳）。
+
+        只有带 `clock_jump_minutes` 的行会推钟（引擎只在四道闸全过的跳时间行上写这个
+        字段，§4.2）；其余消息一概不动钟。
+
+        **跳时间不重置沉默压力**（§4.4）：跳过 8 小时不等于"刚说过话"——这里只动钟，
+        绝不碰任何"谁刚开过口"的状态（角色侧数值沉默压力由引擎的 dynamics 持有，
+        叙述行不是角色台词，本来就抬不动它）。
+
+        推成功的那条行记进 `_jump_applied`（id → 分钟）：撤回/改写要按这份账把时间收回来
+        （见 `_rewind_retracted_jumps`）。
+        """
+        try:
+            minutes = int(msg.get("clock_jump_minutes") or 0)
+        except (TypeError, ValueError):        # 载荷坏了：当没跳（绝不掀翻派发）
+            return 0
+        if minutes <= 0:
+            return 0
+        clock = self._vclock
+        if clock is None:                      # 钟还没起（线程未开）→ 无处可推
+            return 0
+        clock.advance(minutes * sc.SECONDS_PER_MINUTE)
+        mid = msg.get("id")
+        if mid is not None:
+            self._jump_applied[int(mid)] = minutes
+        return minutes
+
+    def _rewind_retracted_jumps(self, ids) -> int:
+        """把被作废的那些跳时间行**已经推掉的钟**收回来，返回收回的分钟数（0 = 没有）。
+
+        §6.1 的撤回是**截断式**的：被撤的行及其后整段下文"从没发生过"——视图/锚点/
+        复读判定/私有记忆/信息库都按这个口径对齐了，而"时间过去了"的**唯一凭据**正是
+        这条带 `clock_jump_minutes` 的行：不收回来，界面钟点、下一块提示词里的【当前时刻】、
+        时间条件钩子的判定、`jump_minutes_from_text` 的"到次日天亮"换算就全都还背着一次
+        不存在的跳跃（用户读到的转录说"这段没发生过"，钟却说已经 22:00 了）。
+
+        幂等：收过的 id 会从 `_jump_applied` 里划掉，同一条行撤回两次不会收两次；没推过钟
+        （钟未起 / 载荷坏 / 本就不带偏移）的行自然无事发生。钟没起时只划账、不倒退。
+        """
+        clock = self._vclock
+        total = 0
+        for mid in ids or ():
+            total += self._jump_applied.pop(int(mid), 0)
+        if clock is not None and total:
+            clock.advance(-total * sc.SECONDS_PER_MINUTE)
+        return total
 
     def _emit_status(self, text: str) -> None:
         if self._status == text:

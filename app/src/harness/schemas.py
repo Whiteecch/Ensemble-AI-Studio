@@ -60,15 +60,61 @@ class Corpus(BaseModel):
 
 
 class CharacterCard(BaseModel):
+    """角色卡：设定/语料/权重，外加**信息库种子**（§9.1）。
+
+    这里没有边界声明那一栏了——"他知道什么"改由信息库承担（索引表恒在提示词里）。
+    老卡上的 `knowledge_boundary` 在**读卡时**逐条搬进 `knowledge_seed`（见
+    `_migrate_legacy`），真正的入库由 `knowledgestore.seed_from_card` 在角色库**首次
+    创建**时做（§9.1 两步走：校验器只搬数据，绝不做 IO）。
+    """
     name: str
     personality: dict[str, str] = Field(default_factory=dict)
     abilities: list[str] = Field(default_factory=list)
     relationships: dict[str, str] = Field(default_factory=dict)
-    knowledge_boundary: list[str] = Field(default_factory=list)
+    #: 信息库种子：老卡的 `knowledge_boundary` 迁进来的每一行（含那句兜底文案——它在
+    #: **播种**时才被丢掉，判据是 `knowledgestore.KNOWLEDGE_FALLBACK`）。库建好之后它
+    #: 一直留在卡上也无害：`seed_from_card` 见库已存在即整段跳过（幂等）。
+    knowledge_seed: list[str] = Field(default_factory=list)
     weights: Weights = Field(default_factory=Weights)
     emotion_decay_rate: float = 0.4
     #: 原作物语料（风格/思维/口头禅/样例）；旧卡无此键 → 空 Corpus，装载行为不变。
     corpus: Corpus = Field(default_factory=Corpus)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy(cls, data: Any) -> Any:
+        """旧卡读时迁移（§9.1 第一步）：`knowledge_boundary` → `knowledge_seed`。**只搬数据。**
+
+        规矩（与 `Scene._migrate_legacy` 同一套）：
+
+          · 逐条保持顺序——用户写的每一条边界都必须活着进信息库，这是本次改造的最高约束；
+          · 两个键都在（半迁移的卡）→ 以新键为准，老键淘汰；
+          · 老键缺席或为空 → 空列表（"没有库"是合法状态，§9.2）。
+
+        这里**绝不做 IO**：pydantic 的 `model_validator` 是纯函数，在里面建库文件会让
+        "读一张卡"变成有副作用的操作（列表扫描、编辑器预览、测试夹具全都会意外写出文件）。
+        真正播种是 `knowledgestore.seed_from_card` 那次显式、可测、有日志的动作。
+        """
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        legacy = data.pop("knowledge_boundary", None)
+        if "knowledge_seed" not in data:
+            if isinstance(legacy, (list, tuple)):
+                data["knowledge_seed"] = [str(item) for item in legacy]
+            elif isinstance(legacy, str) and legacy.strip():
+                data["knowledge_seed"] = [legacy]     # 手写成一行文本也认（当一条）
+            else:
+                data["knowledge_seed"] = []
+        return data
+
+    @property
+    def knowledge_boundary(self) -> list[str]:
+        """退役字段 `knowledge_boundary` 的**只读派生**别名（与 `Scene.participants` 同一套
+        退役写法）：数据只有一个真相源（`knowledge_seed`），仍读老名字的下游（模板导入的
+        "未填字段"统计）照常工作，但**写**不进来——退役的字段不该还有第二条入口。
+        """
+        return self.knowledge_seed
 
 
 class HardBoundary(BaseModel):

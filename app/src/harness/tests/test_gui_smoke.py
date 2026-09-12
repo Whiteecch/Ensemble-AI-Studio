@@ -97,8 +97,8 @@ def _left_text(win: MainWindow) -> str:
 def test_mainwindow_builds_and_runs_offscreen(qapp):
     """三栏主窗口（stub 配置）能在 offscreen Qt 事件循环里正常构造并 exec 返回 0。"""
     cfg = AppConfig(
-        scene=Path("scenes/餐厅.json"),
-        characters=[Path("characters/甲.json"), Path("characters/乙.json")],
+        scene=Path("scenes/贝克街221B.json"),
+        characters=[Path("characters/福尔摩斯.json"), Path("characters/华生.json")],
         models=Path("config/models.yaml"), bid=Path("config/bid.yaml"),
         run_root=Path("runs"), live=False, api_key=None, closing_at_block=8)
     worker = SceneWorker()                 # 只构造不 start：本测只验窗口
@@ -347,11 +347,30 @@ def test_gui_reopen_after_natural_finish_restarts_scene(qapp, tmp_path):
         assert _wait_until(qapp, lambda: len(chars()) > before, 6000), \
             "重开后应继续自主开口"
         assert _wait_until(qapp, lambda: worker.can_say()), "重开后应可发话"
-        assert "夜色渐深，两人对坐。" in win._view.toPlainText(), \
+        assert "夜晚的餐厅，二人临窗而坐。" in win._view.toPlainText(), \
             "重开后的开场应重新进入对白"
     finally:
         worker.shutdown(4000)
         assert not worker.isRunning(), "worker 线程应收尾退出"
+
+
+def test_worker_shutdown_right_after_start_still_stops_the_thread(qapp):
+    """收尾竞态回归：`shutdown()` 紧接 `start()` 也必须把线程停住。
+
+    为什么钉这条：`start()` 返回后到 `run()` 里把 `_loop` 建好、`_ready` 置位之间有
+    一段极短的窗口。旧写法在窗口里读到 `self._loop is None`，就把"在 loop 上投
+    teardown"整段跳过，只剩一次 `wait(timeout)`——而 `run_forever` 没有别的出口，
+    等不到就永远不出来：于是这条线程（以及它的事件循环/引擎/sqlite 连接）在进程里
+    永久留着。实测这类"永不退出"的 worker 线程会一直接着跑 asyncio 轮询，是整场
+    测试进程被掀翻的一条来路（也让 `assert not worker.isRunning()` 变成随机红绿）。
+
+    连开三个、每个都"一起表就收"，把竞态窗口撞准；修好后三个都必须停住。
+    """
+    for _ in range(3):
+        worker = SceneWorker()
+        worker.start()
+        worker.shutdown(4000)
+        assert not worker.isRunning(), "start 后紧接着的 shutdown 也必须停掉线程"
 
 
 def test_worker_open_failure_emits_error_and_can_retry(qapp, tmp_path):
@@ -1438,8 +1457,8 @@ def test_gui_pending_reply_row_shows_outstanding_ask(qapp, tmp_path):
     """右栏角色卡「实时分量」新增「待回应压力」行：被点名未答 → 该行显数值（条截在
     cap 8）、被点名/回应对象行后缀「（第 N 轮未答）」；作答后归零、后缀消失。"""
     worker = SceneWorker()                     # 只构造不 start：本测只验渲染路径
-    cfg = AppConfig(scene=Path("scenes/餐厅.json"),
-                    characters=[Path("characters/甲.json")],
+    cfg = AppConfig(scene=Path("scenes/贝克街221B.json"),
+                    characters=[Path("characters/福尔摩斯.json")],
                     models=Path("config/models.yaml"), bid=Path("config/bid.yaml"),
                     run_root=tmp_path / "pend", live=False, api_key=None,
                     closing_at_block=8)

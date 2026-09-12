@@ -119,9 +119,11 @@ class StubEngine:
         self._muted.pop(name, None)
 
     async def schedule_cast_change(self, character_name, action, fire_after_rounds,
-                                   notify=None, notify_text="", visible=True, turns=0):
+                                   notify=None, notify_text="", visible=True, turns=0,
+                                   reason=""):
         self.calls.append(("schedule", character_name, action, fire_after_rounds,
-                           list(notify or []), notify_text, visible, turns))
+                           list(notify or []), notify_text, visible, turns,
+                           str(reason or "")))
         return {"character_name": character_name, "action": action,
                 "fire_after_rounds": fire_after_rounds}
 
@@ -184,7 +186,78 @@ def test_worker_schedule_cast_change_passes_through(worker_with_engine, qapp):
                                 notify_text="稍后静默", visible=False, turns=4)
     assert _wait_until(qapp, lambda: any(c[0] == "schedule" for c in engine.calls))
     assert engine.calls[0] == ("schedule", "丙", "mute_turns", 2, ["乙"],
-                               "稍后静默", False, 4)
+                               "稍后静默", False, 4, "")
+
+
+def test_worker_schedule_cast_change_forwards_reason(worker_with_engine, qapp):
+    """原因（§5.1）经 worker 原样落到引擎的 `reason=` 实参上（spy 钉住实参）。
+
+    「带原因的 N 回合后移入/移出」这条链上，worker 是界面与引擎之间唯一的一跳：它若
+    把 reason 吃掉，界面上写了原因、引擎侧 `PendingCharacterAction.reason` 却永远是空串，
+    且**不报错**——只有钉住实参的这条测试能发现。
+    """
+    worker, engine, _, _, _ = worker_with_engine
+    worker.schedule_cast_change("丙", "remove", 5, notify=["甲", "场景"],
+                                notify_text="丙待会儿走", reason="  去见师父  ")
+    assert _wait_until(qapp, lambda: any(c[0] == "schedule" for c in engine.calls))
+    # 原因按收到的原样透传（含首尾空格）：裁空白是**界面**的事（弹窗里 strip），
+    # worker 只搬不判——引擎侧到渲染那一刻才规整空白，队列里的 reason 与收到的一致。
+    assert engine.calls[0] == ("schedule", "丙", "remove", 5, ["甲", "场景"],
+                               "丙待会儿走", True, 0, "  去见师父  ")
+
+    # 省略 reason（老调用方）= 空串，逐字节等于今天的行为。
+    worker.schedule_cast_change("乙", "remove", 1)
+    assert _wait_until(qapp, lambda: len(engine.calls) > 1)
+    assert engine.calls[1] == ("schedule", "乙", "remove", 1, [], "", True, 0, "")
+
+
+def test_worker_schedule_cast_change_reason_reaches_pending_action(qapp, tmp_path):
+    """验收口径（§5.1）：真 worker + **真引擎**，原因落到 `PendingCharacterAction.reason`。
+
+    替身引擎只能证明「worker 把实参传出去了」；这一条证明整条链的另一端也接上了——
+    带原因的「N 回合后移出」真的在引擎的预约队列里带着那句话，且到期前一直在。
+    """
+    import json as _json
+
+    scene_p = tmp_path / "茶室.json"
+    scene_p.write_text(_json.dumps({"name": "茶室", "characters": ["甲"]},
+                                   ensure_ascii=False), encoding="utf-8")
+    a_p = tmp_path / "甲.json"
+    a_p.write_text(_json.dumps({"name": "甲", "personality": {"描述": "甲"}},
+                               ensure_ascii=False), encoding="utf-8")
+    models_p = tmp_path / "models.yaml"
+    models_p.write_text("think:\n  backend: stub\n  model: stub\n  params: {}\n"
+                        "speak:\n  backend: stub\n  model: stub\n  params: {}\n",
+                        encoding="utf-8")
+    bid_p = tmp_path / "bid.yaml"
+    bid_p.write_text("interruption_threshold: 0.0\nspeak_threshold: 0.0\n"
+                     "silence_k: 100000\n", encoding="utf-8")
+
+    worker = SceneWorker()
+    worker.start()
+    assert worker._ready.wait(5.0)
+    casts: list[dict] = []
+    worker.sig_cast.connect(casts.append)
+    try:
+        worker.start_scene(scene_p, [a_p], models_p, live=False, bid=bid_p,
+                           opening="静场。", run_root=tmp_path / "rr",
+                           api_key=None, closing_at_block=100000)
+        assert _wait_until(qapp, lambda: bool(casts), 6000), "应收到演员表广播"
+        assert "甲" in worker._engine.cast_state()["active"], "前置：甲在场"
+
+        worker.schedule_cast_change("甲", "remove", 99, reason="去见师父")
+
+        assert _wait_until(
+            qapp,
+            lambda: bool(worker._engine._pending_cast)
+            and worker._engine._pending_cast[-1].reason == "去见师父"), \
+            "原因必须随动作一起进引擎的预约队列"
+        item = worker._engine._pending_cast[-1]
+        assert item.character_name == "甲" and item.action == "remove"
+        # 回执（队列的序列化）也带着它——日志/界面据此刻画"这次变动有个原因"。
+        assert worker._engine.pending_cast_changes()[-1]["reason"] == "去见师父"
+    finally:
+        worker.shutdown(4000)
 
 
 def test_worker_cast_failure_surfaces_status(worker_with_engine, qapp):

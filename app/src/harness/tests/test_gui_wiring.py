@@ -31,6 +31,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import QObject, Signal  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
+from harness import knowledgestore as store  # noqa: E402
 from harness import scenestore as scenestore_mod  # noqa: E402
 from harness.engine import SceneEngine  # noqa: E402
 from harness.gui import main_window as mw_mod  # noqa: E402
@@ -743,3 +744,325 @@ def _run_app(gui_app, qapp, tmp_path: Path, monkeypatch, extra: list[str],
         assert captured["order"] == [("build", None), ("show", None)], \
             "缺省不自动开场（也没有任何开场设置窗）：窗口直接起来，起手是空状态页"
     return captured
+
+
+# ===================================== 信息库接线（§9.1 第二步 / §10.2 / §13.3） ===
+def _spy_worker_engine(monkeypatch) -> list[dict]:
+    """把 worker 建引擎那一步换成记录器：返回收到的实参列表（按建引擎次数追加）。
+
+    只 spy 不建真引擎：这里要钉的是"实参有没有传下去"，建真引擎会把信号/线程/磁盘
+    都牵进来，反而看不清传了什么。
+    """
+    seen: list[dict] = []
+
+    def _fake_engine(*args, **kwargs):
+        seen.append(dict(kwargs))
+        return object()
+
+    monkeypatch.setattr(worker_mod, "SceneEngine", _fake_engine)
+    return seen
+
+
+def _worker_cfg(tmp_path, card_p: Path | None = None) -> dict:
+    """一份最小的 start_scene 配置（与既有那条用例同形，缺项由 worker 自己兜底）。"""
+    return {
+        "scene": tmp_path / "s.json", "characters": [card_p or tmp_path / "c.json"],
+        "models": tmp_path / "models.yaml", "bid": None, "live": False,
+        "api_key": None, "run_root": tmp_path / "runs",
+        "closing_at_block": None, "start_time": None, "cast_from_cards": False,
+    }
+
+
+def _old_card(tmp_path: Path) -> Path:
+    """一张老形状的卡（只有 `knowledge_boundary`）：迁移后就是 knowledge_seed。"""
+    p = tmp_path / "characters" / "甲.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps({
+        "name": "甲", "personality": {"描述": "话少"},
+        "knowledge_boundary": ["知道：药铺的暗格", "只知道自己经历和被告知的事"],
+    }, ensure_ascii=False), encoding="utf-8")
+    return p
+
+
+def test_worker_default_libraries_root_is_app_libraries():
+    """缺省信息库根 = 仓库内的 `app/libraries`（与 gui/app.py 定位素材同一套 parents[3]，§13.3）。
+
+    隔离夹具把**类属性**指到了临时目录（不许用例往仓库里播种），但模块里的推导函数原样
+    不动——故这里钉推导：算出来的 app 根必须真的是素材目录所在处，结果必须叫 `libraries`。
+    """
+    app_dir = Path(worker_mod.__file__).resolve().parents[3]
+    assert (app_dir / "scenes").is_dir() and (app_dir / "characters").is_dir(), \
+        "app 根推断错了（素材目录不在这里）"
+    assert worker_mod._default_libraries_root() == app_dir / "libraries"
+    assert worker_mod._DEFAULT_LIBRARIES_ROOT == app_dir / "libraries"
+
+
+def test_worker_build_engine_carries_libraries_root_and_knowledge_switch(tmp_path,
+                                                                        monkeypatch):
+    """建引擎时把**信息库根**与设置里的**开关**真的传进引擎（§10.2/§13.3）：spy 钉实参。
+
+    开关缺省开：没写过设置的用户拿到的就是"有库就查库"的新行为；关掉时引擎侧必须收到
+    False（关 = 与没有信息库同义，引擎据此不注入索引、不传 tools）。
+    """
+    settings_path = tmp_path / "settings" / "settings.json"
+    monkeypatch.setattr(settings_mod, "default_settings_path", lambda: settings_path)
+    seen = _spy_worker_engine(monkeypatch)
+    worker = SceneWorker()
+    worker._cfg = _worker_cfg(tmp_path)
+
+    asyncio.run(worker._build_engine())
+    assert seen[0]["libraries_root"] == worker.libraries_root
+    assert seen[0]["knowledge_enabled"] is True, "开关缺省开（DEFAULT_KNOWLEDGE_ENABLED）"
+
+    SettingsStore(settings_path).save(AppSettings(knowledge_enabled=False))
+    asyncio.run(worker._build_engine())
+    assert seen[1]["knowledge_enabled"] is False, "设置里关掉 → 引擎侧等同无库"
+
+    SettingsStore(settings_path).save(AppSettings(knowledge_enabled=True))
+    asyncio.run(worker._build_engine())
+    assert seen[2]["knowledge_enabled"] is True, "改回来也立刻生效（下一场建引擎时读一次）"
+
+
+def test_worker_seeds_old_cards_before_building_the_engine(tmp_path, monkeypatch,
+                                                           _isolate_libraries_root):
+    """建引擎**之前**先把这一场装载的老卡播种（§9.1 第二步）：库建好了，本场副本才拷得到它。
+
+    播种落在 `worker.libraries_root`（隔离夹具给的临时目录）下；兜底句不进库。这条同时
+    钉住"播种发生在建引擎之前"——顺序反了，引擎开场建的那份副本里就没有这几条种子，
+    这一场的索引表是空的（`seed_from_card` 只在**库首次创建**时写）。
+    """
+    card_p = _old_card(tmp_path)
+    order: list[str] = []
+    real_seed = worker_mod.store.seed_character_library
+
+    def _seed(card, *, root):
+        order.append("seed")
+        return real_seed(card, root=root)
+
+    monkeypatch.setattr(worker_mod.store, "seed_character_library", _seed)
+
+    def _fake_engine(*args, **kwargs):
+        order.append("engine")
+        return object()
+
+    monkeypatch.setattr(worker_mod, "SceneEngine", _fake_engine)
+    worker = SceneWorker()
+    worker._cfg = _worker_cfg(tmp_path, card_p)
+
+    asyncio.run(worker._build_engine())
+
+    lib = Path(_isolate_libraries_root) / "characters" / "甲"
+    assert store.load_library(lib).library.ordered_keys() == ["药铺的暗格"]
+    assert order == ["seed", "engine"], "播种必须在建引擎之前"
+
+
+def test_worker_does_not_seed_while_retrieval_is_switched_off(tmp_path, monkeypatch):
+    """开关关着就不建库（§10.2：关 = 与**没有信息库**同义）——连一座新库都不该冒出来。
+
+    卡上的种子照旧留着（播种幂等、卡不改），把开关开回来后下一场就播进去了：一条都不丢。
+    """
+    settings_path = tmp_path / "settings" / "settings.json"
+    monkeypatch.setattr(settings_mod, "default_settings_path", lambda: settings_path)
+    card_p = _old_card(tmp_path)
+    libs = tmp_path / "libs"
+    worker = SceneWorker()
+    worker.libraries_root = libs
+    worker._cfg = _worker_cfg(tmp_path, card_p)
+    _spy_worker_engine(monkeypatch)
+
+    SettingsStore(settings_path).save(AppSettings(knowledge_enabled=False))
+    asyncio.run(worker._build_engine())
+    assert not (libs / "characters" / "甲").exists(), "关掉检索时不该建库"
+
+    SettingsStore(settings_path).save(AppSettings(knowledge_enabled=True))
+    asyncio.run(worker._build_engine())
+    assert (libs / "characters" / "甲").exists(), "开回来之后照常播种（卡上种子一直留着）"
+
+
+def test_worker_seeding_survives_a_broken_card_and_never_blocks_the_scene(
+        tmp_path, monkeypatch, _isolate_libraries_root):
+    """坏卡/缺文件只跳过，绝不拦住开场（播种是旁挂动作）：照常建引擎，好卡照常播种。"""
+    good = _old_card(tmp_path)
+    missing = tmp_path / "characters" / "查无此人.json"     # 不存在的卡文件
+    worker = SceneWorker()
+    worker._cfg = _worker_cfg(tmp_path)
+    worker._cfg["characters"] = [missing, good]
+    seen = _spy_worker_engine(monkeypatch)
+
+    asyncio.run(worker._build_engine())
+
+    assert seen, "坏卡不该让建引擎整段落空（开场照常）"
+    lib = Path(_isolate_libraries_root) / "characters" / "甲"
+    assert store.load_library(lib).library.ordered_keys() == ["药铺的暗格"], \
+        "别人照常播种（一张坏卡不牵连其余卡）"
+
+
+def test_worker_seeds_the_whole_character_library_not_just_the_loaded_cast(
+        tmp_path, monkeypatch, _isolate_libraries_root):
+    """角色库里**没被本场装载**的卡也要播种（§9.1 第二步 / §3.2 按需装卡）。
+
+    引擎运行期能从角色库目录按需装人（GUI 的「添加角色」→ `add_character`）。这些人若
+    从没被播种，一旦第一次散场结算把本体库建出来，`seed_from_card` 的"库已存在即整段
+    跳过"就会让他们的种子**永远**播不进去——不是没播，是播不进去了（除非手删库目录，
+    而界面上没有任何地方提示要这么做）。他们的边界文字又已随 §9.1 从提示词撤除，等于
+    "内容还在卡上、但运行时已经死了"。
+
+    故播种范围 = **这一场可能用到的每一张卡**：显式装载的 + 角色库目录里其余的。
+    """
+    in_cast = _old_card(tmp_path)                       # 甲：本场装载
+    pool = tmp_path / "characters" / "乙.json"          # 乙：只在角色库里，随时可被请进场
+    pool.write_text(json.dumps({
+        "name": "乙", "personality": {"描述": "爱笑"},
+        "knowledge_boundary": ["知道：茶室的暗格", "乙认识陈掌柜"],
+    }, ensure_ascii=False), encoding="utf-8")
+    worker = SceneWorker()
+    worker._cfg = _worker_cfg(tmp_path, in_cast)        # characters_dir 缺省 = 卡所在目录
+    _spy_worker_engine(monkeypatch)
+
+    asyncio.run(worker._build_engine())
+
+    root = Path(_isolate_libraries_root)
+    assert store.load_library(root / "characters" / "甲").library.ordered_keys() == ["药铺的暗格"]
+    assert store.load_library(root / "characters" / "乙").library.ordered_keys() == \
+        ["茶室的暗格", "乙认识陈掌柜"], "角色库里的人也要播种（他随时可能被请进场）"
+
+
+def test_seeded_knowledge_reaches_a_character_added_mid_scene(
+        tmp_path, monkeypatch, _isolate_libraries_root):
+    """端到端：中途请进场的角色，**这一场就能看见**他卡上迁进信息库的那几条（§9.1/§3.2）。
+
+    这是播种范围那条修法的落点：种子 → 本体库 → 进场时拷一份副本 → 索引小节进提示词。
+    只播"本场装载的卡"时，乙的本体库不存在，他进场后索引是空的——而他的边界文字又已随
+    §9.1 从提示词撤除，等于这个人当场失忆；更要命的是第一次散场结算会以残缺内容把本体库
+    建出来，此后播种被幂等闸门永久挡住。
+
+    走真引擎 + stub 后端（`add_character` 走的就是 GUI「添加角色」那条路），只看
+    `index_text`——不依赖模型，故确定性。
+    """
+    chars = tmp_path / "characters"
+    chars.mkdir(parents=True, exist_ok=True)
+    (chars / "甲.json").write_text(json.dumps(
+        {"name": "甲", "personality": {"描述": "话少"}}, ensure_ascii=False),
+        encoding="utf-8")
+    pool = tmp_path / "characters" / "乙.json"
+    pool.write_text(json.dumps({
+        "name": "乙", "personality": {"描述": "爱笑"},
+        "knowledge_boundary": ["知道：药铺的暗格", "陈掌柜是个跛子"],
+    }, ensure_ascii=False), encoding="utf-8")
+    scene_p = tmp_path / "scenes" / "茶室.json"
+    scene_p.parent.mkdir(parents=True, exist_ok=True)
+    scene_p.write_text(json.dumps({"name": "茶室", "participants": ["甲"]},
+                                  ensure_ascii=False), encoding="utf-8")
+    models_p = tmp_path / "config" / "models.yaml"
+    models_p.parent.mkdir(parents=True, exist_ok=True)
+    models_p.write_text("think:\n  backend: stub\n  model: stub\n  params: {}\n"
+                        "speak:\n  backend: stub\n  model: stub\n  params: {}\n",
+                        encoding="utf-8")
+    worker = SceneWorker()
+    worker._cfg = {**_worker_cfg(tmp_path, chars / "甲.json"),
+                   "scene": scene_p, "models": models_p}
+
+    engine = asyncio.run(worker._build_engine())
+
+    async def _join_and_read_index() -> str:
+        await engine.open_scene()
+        await engine.add_character("乙")
+        return engine._knowledge.index_text("乙")
+
+    index = asyncio.run(_join_and_read_index())
+
+    assert "药铺的暗格" in index and "陈掌柜是个跛子" in index, \
+        f"中途进场的角色必须看得见自己迁进信息库的知识，实际索引：{index!r}"
+    asyncio.run(engine.aclose())
+
+
+def test_worker_surfaces_seed_warnings_in_the_log(tmp_path, monkeypatch, caplog,
+                                                  _isolate_libraries_root):
+    """播种跳过了什么必须**说出来**（§4.3：不安全就报给用户看，绝不静默丢弃）。
+
+    播种的 `warnings` 此前在两个入口都被整条丢弃，界面与命令行一个字都不说——用户只会
+    发现"我写的东西没进库"，无从排查。警告进日志（GUI 侧）就够：它不是错误，不该拦住开场。
+    """
+    card = tmp_path / "characters" / "甲.json"
+    card.parent.mkdir(parents=True, exist_ok=True)
+    card.write_text(json.dumps({
+        "name": "甲", "knowledge_boundary": ["知道：药铺的暗格", "知道：药铺的暗格"],
+    }, ensure_ascii=False), encoding="utf-8")
+    worker = SceneWorker()
+    worker._cfg = _worker_cfg(tmp_path, card)
+    _spy_worker_engine(monkeypatch)
+
+    with caplog.at_level("WARNING", logger="harness.gui.worker"):
+        asyncio.run(worker._build_engine())
+
+    assert "重复" in caplog.text, "被跳过的种子行必须在日志里说清楚"
+
+
+class _SettlementEngine:
+    """替身引擎：只补齐收尾（`_finalize_locked`）要读的那几样，并记下 `prepare_settlement` 调用。
+
+    `closed` 可调（收束路径与"还没收束"两条语义不同）；`messages/metrics` 是收尾本体
+    直接读的两处（其余读取都在 try/except 里，替身没有也照常）。
+    """
+
+    def __init__(self, *, closed: bool = True) -> None:
+        self.closed = closed
+        self.prepared = 0
+        self.scene = type("S", (), {"name": "茶室"})()
+
+    async def messages(self) -> list[dict]:
+        return []
+
+    def metrics(self) -> dict:
+        return {}
+
+    async def prepare_settlement(self) -> dict:
+        self.prepared += 1
+        return {}
+
+
+def test_worker_finalize_prepares_settlement_once_the_scene_closed(qapp):
+    """收尾时显式调一次 `prepare_settlement()`（§7.4）：引擎只准备、界面才决定。
+
+    GUI 这条收尾路此前一步都没走——角色这一场的所得永远停在副本里。这里钉两件：
+    **收束了**才准备（还没收束的一步都不该写散场总结），且准备失败绝不拦住收尾
+    （状态与 finished 必须发出去，否则界面永远停在"进行中"）。
+    """
+    worker = SceneWorker()
+    finished: list[bool] = []
+    worker.sig_finished.connect(lambda: finished.append(True))
+
+    engine = _SettlementEngine(closed=True)
+    worker._engine = engine
+    asyncio.run(worker._finalize_locked("已收束", reason="测试", close_engine=False,
+                                        closing_content=None))
+    assert engine.prepared == 1, "收束的收尾必须调一次 prepare_settlement"
+    assert finished == [True], "收尾信号照发"
+
+    # 重复收尾（_notified 闸门）：不再调一次
+    asyncio.run(worker._finalize_locked("已收束", reason="测试", close_engine=False,
+                                        closing_content=None))
+    assert engine.prepared == 1
+
+    # 还没收束：不准备（这一场还没结束）
+    worker2 = SceneWorker()
+    engine2 = _SettlementEngine(closed=False)
+    worker2._engine = engine2
+    asyncio.run(worker2._finalize_locked("已停止", reason="测试", close_engine=False,
+                                         closing_content=None))
+    assert engine2.prepared == 0
+
+    # 准备失败（模型炸了/磁盘满）不得拦住收尾
+    worker3 = SceneWorker()
+    engine3 = _SettlementEngine(closed=True)
+
+    async def _boom() -> dict:
+        raise RuntimeError("后端挂了")
+
+    engine3.prepare_settlement = _boom
+    worker3._engine = engine3
+    done: list[bool] = []
+    worker3.sig_finished.connect(lambda: done.append(True))
+    asyncio.run(worker3._finalize_locked("已收束", reason="测试", close_engine=False,
+                                         closing_content=None))
+    assert done == [True], "准备结算失败绝不拦住收尾"

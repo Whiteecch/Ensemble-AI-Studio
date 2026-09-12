@@ -22,6 +22,7 @@ visibility 边界转成 Message（view_for/render_view 只认 Message 属性）�
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,7 @@ from . import bidding as bidding_mod
 from . import memory as memory_mod
 from . import textsim
 from .backends.base import ModelBackend
+from .knowledgetools import MAX_TOOL_CALLS, MAX_TOOL_ROUNDS, KnowledgeAccess
 from .prompters import build_speak_messages, build_think_messages
 from .schemas import CharacterCard, Message, Scene, ThinkResult
 from .visibility import render_view, view_for
@@ -56,6 +58,10 @@ def _merge_urges(left: dict[str, float] | None, right: dict[str, float] | None) 
 #: think 只读边通道封顶（条数）：UI 只读最近日志，旧条无人消费——丢最旧防无限增长。
 #: 远大于 GUI 日志窗格上限(400)与每 500 块成本守卫的累积量级，正常绝不触发裁剪。
 _THINK_LOG_CAP = 2000
+
+#: speak 流式接收器封顶（条数）：与 think_log 同一纪律——GUI 按 seq 增量读，丢最旧不影响
+#: 派发。流式的片比 think 条数密得多（一句台词可能几十片），上限给得比 think_log 宽。
+_SPEAK_STREAM_CAP = 4000
 
 
 class GraphState(TypedDict, total=False):
@@ -93,6 +99,16 @@ class GraphContext:
 
     language_directive：语言指令（§7），think/speak 直接作为 `language_directive=` 传给
     对应 builder（追加在系统消息末尾）。空串（裸图/缺省）= 提示词逐字节不变。
+
+    speak_stream / stream_speak / speak_seq：**speak 的流式接收器**（《人际关系与场景
+    推进》§二）。与 think_log 完全同一范式——引擎持同一个 list、GUI 增量读尾部、**绝不
+    路由共享态**（它是给人看的只读边通道，不是新的真相源：真相仍是收尾时落下的那条
+    `block_spoken`）。条目两态：
+      · `{"kind": "piece", "text": …}` 正在说的一个增量；
+      · `{"kind": "end", "settled": bool}` 这一块说完了；`settled=False` 表示**没有**
+        正式消息落地（近重复被整块作废）→ 界面据此撤掉临时气泡。
+    三者一起看：`stream_speak=False`（缺省）时 speak 仍走今天那一句 `complete_text`，
+    接收器一个条目都不追加——**逐字节、逐事件、逐调用次数与今天相同**（铁律）。
     """
     cards: dict[str, CharacterCard]
     scene: Scene
@@ -116,6 +132,22 @@ class GraphContext:
     #: 把整场历史判成「不在本空间」。缺省 "" → 取 scene.name（裸图/离线测试逐字节不变；
     #: 引擎路径在建图时注入 __init__ 捕获的那个 id，见 SceneEngine._scene_space）。
     space: str = ""
+
+    #: 信息库取用通道（§6.1/§6.3/§6.4）：引擎注入的 `KnowledgeAccess`（缺省 None =
+    #: **没有信息库**——索引不注入、think 走今天那一句 complete_json、speak 不带取用小节，
+    #: 与引进信息库之前**逐字节、逐调用次数相同**，这是全程最硬的一条不变量）。
+    #: 它只喂 prompt 与本地工具执行，**绝不进共享态**：共享态有 PUBLIC_KEYS 白名单，
+    #: 私人知识一旦进去就破了信息边界（见 tests/helpers.py）。
+    knowledge: KnowledgeAccess | None = None
+
+    #: speak 流式接收器（§二）：见类 docstring。缺省空 list（裸图/离线路径无事发生）。
+    speak_stream: list = field(default_factory=list)
+    #: 流式片序号（单调递增；接收器在 append 端封顶裁剪，序号不受影响，GUI 据此增量派发）。
+    speak_seq: int = 0
+    #: 是否走流式收 speak 正文。**缺省 False**：不开启时 speak 仍是今天那一句
+    #: `complete_text`，一切逐字节、逐事件、逐调用次数相同（铁律 3）。界面上的开关
+    #: 由设置驱动（gui/settings.AppSettings.stream_speak），引擎经构造参数注入。
+    stream_speak: bool = False
 
     def __post_init__(self) -> None:
         if not self.space:
@@ -226,6 +258,48 @@ def _closing_msg(state: dict, scene_name: str) -> dict:
             "turn": state.get("turn", 0)}
 
 
+def _append_speak_stream(ctx: GraphContext, speaker: str, turn: int, *,
+                         kind: str, text: str = "", settled: bool = False) -> None:
+    """往 speak 流式接收器追加一条（只读边通道，非共享态；见 GraphContext 的说明）。
+
+    与 think_log 同一纪律：append 端按 `_SPEAK_STREAM_CAP` 丢最旧封顶，`seq` 单调递增
+    （裁剪不影响 GUI 按 seq 增量派发）。空正文的**片**由调用方筛掉（`_speak_streamed`：
+    心跳/推理内容不是台词）；收尾标记的 `text` 恒为空串，那是它的形状（定点在 kind）。
+    """
+    ctx.speak_seq += 1
+    log = ctx.speak_stream
+    if len(log) >= _SPEAK_STREAM_CAP:
+        del log[: len(log) - _SPEAK_STREAM_CAP + 1]
+    log.append({"seq": ctx.speak_seq, "speaker": speaker, "turn": turn,
+                "kind": kind, "text": text, "settled": bool(settled)})
+
+
+async def _speak_streamed(ctx: GraphContext, name: str, turn: int,
+                          msgs: list[dict]) -> str:
+    """逐片收 speak 正文（开启流式时）：每片进接收器，返回**拼起来的完整文本**。
+
+    拼接结果是这一块的真相（后续的近重复判定、落消息、写转录全都用它），而与
+    `complete_text` 的产出逐字节相同是**后端侧的契约**（`base.complete_text_stream`
+    的 docstring）：流式只把同一段文本分成几块吐出来。
+
+    **中途失败也要给界面一个收场**：异常原样上抛（worker 靠它做整块重试，既有语义不变），
+    但上抛前补一条 `settled=False` 的收尾标记——已吐出的半句正挂在屏幕上，不收场的话
+    重试那一遍的片会**拼在旧的半句后面**（同一说话人 → 界面以为是同一个气泡）。标记一到，
+    界面撤掉它，重试从干净的气泡重新开始。
+    """
+    parts: list[str] = []
+    try:
+        async for piece in ctx.speak.complete_text_stream(msgs):
+            if not piece:
+                continue                    # 空白片不进接收器（省得界面白重绘一次）
+            parts.append(piece)
+            _append_speak_stream(ctx, name, turn, kind="piece", text=piece)
+    except Exception:
+        _append_speak_stream(ctx, name, turn, kind="end", settled=False)
+        raise
+    return "".join(parts)
+
+
 def _is_near_repeat_of_own(messages: list[dict], speaker: str, content: str) -> bool:
     """candidate 台词是否几乎复读 speaker 自己最近 ≤3 条台词（含动作/措辞相近）。
 
@@ -241,6 +315,99 @@ def _is_near_repeat_of_own(messages: list[dict], speaker: str, content: str) -> 
         if textsim.ratio(content, prior) >= _DUP_RATIO:
             return True
     return False
+
+
+#: 取用预算耗尽后，同一轮里剩余工具调用的**回执文本**（§6.3：超限即停止取用）。
+#: 必须以 tool 消息回齐每个 tool_call_id——带了 tool_calls 的 assistant 回合后面缺一条
+#: 对应的 tool 结果，服务端会判请求非法（HTTP 400），省下的两次取用会换来整块失败。
+_TOOL_BUDGET_TEXT = "（这一块查得够多了，先用手上有的信息说下去。）"
+
+
+async def _final_draft(ctx: GraphContext, resp: dict, msgs: list[dict]) -> dict:
+    """收敛轮 / 收尾轮的响应 → 终稿 dict；content 不是 JSON 就补问一次**不带 tools** 的调用。
+
+    为什么需要这一层：带 tools 的那几轮**没有 response_format**（`deepseek._payload`：
+    `json_mode=not tools`；`backends/base.complete_turn` 的调用方契约也写着"终稿 JSON 由
+    调用方在循环收敛后改调 complete_json 取得"），于是 content 可能是空串（API 的 null
+    归一化）、一句自然语言前言、或包在 ``` 围栏里的 JSON。旧路 `complete_json` 由服务端
+    保证"content 必是合法 JSON"，这条路上没有这层保证。
+
+    直接 `json.loads` 的代价不是这一次失败：graph 不吞异常 → `gui/worker.py` 把它当"模型
+    暂不可用"，按节拍重跑**整块**（重复计费），而同一提示词的失败是确定性的，场景会在这块
+    上长时间空转烧 token，用户看到的是"一直重试不推进"。
+
+    兜底就是契约里那一句：**再走一次不带 tools 的调用**（response_format 回来了，content
+    即终稿 JSON），用它自己那份**原封不动的带索引提示词**（`msgs`）重问——与
+    `NotImplementedError` 降级那条路径同一份输入，形状可预期（不带 tools 的 complete_turn
+    与 complete_json 的请求逐字节相同）。它**不是多花**：只在 content 解析不出来时才发生，
+    模型规规矩矩出 JSON 时一次调用都不多（§6.3 的成本闸门仍成立）。
+
+    `msgs` 用副本传参，绝不改动调用方的对话（工具轮那份 `convo` 仍归调用方）。
+    """
+    try:
+        return json.loads(resp.get("content") or "")
+    except ValueError:
+        return await ctx.think.complete_json(list(msgs))
+
+
+async def _think_raw_with_tools(ctx: GraphContext, listener: str,
+                                msgs: list[dict], turn: int) -> dict:
+    """think 的工具循环（§6.3）：模型要工具 → 本地执行 → 回喂 → 直到终稿。返回**校验前**的终稿 dict。
+
+    收口口径（与 knowledgetools 的 MAX_TOOL_ROUNDS / MAX_TOOL_CALLS 共用同一组常量，
+    这里**不再另定一个数**）：
+
+      · 模型没要工具 → 它的 content 就是终稿 JSON，**一次调用都不多花**（成本闸门）；
+      · 模型要了工具 → 把这一条 assistant 消息**原样**追加回对话（content / tool_calls /
+        reasoning_content 一个不能少：思考模式下不回传 reasoning_content 会 400），逐个
+        本地执行（`KnowledgeAccess.execute` 自己把取用记进 recall.jsonl，调用方不必再记），
+        结果以 `{"role": "tool", "tool_call_id": …}` 追加，再进下一轮；
+      · 预算（最多 MAX_TOOL_ROUNDS 轮往返 / MAX_TOOL_CALLS 次取用）耗尽即停，再补一次
+        **不带 tools** 的调用拿终稿——这不是多花一次：不带 tools 的 complete_turn 与
+        complete_json 的请求逐字节相同，而且是**必须**的，因为带 tools 的那几轮没有
+        response_format，content 未必是 JSON，直接拿去解析就是拿自由文本喂 schema；
+      · 两处读终稿的地方（收敛轮与预算收尾轮）都经 `_final_draft`：content 不是 JSON 时
+        补问一次不带 tools 的（见那里的理由——不能让"模型多打了一对 ```"变成 worker 的
+        无限整块重试）；
+      · 后端不支持原生工具（complete_turn 抛 NotImplementedError）→ 降级为**带索引、
+        不传 tools** 的一次 complete_json：索引照给，取用能力没有；
+      · 解析失败照旧抛（json 坏 / ThinkResult.model_validate 无条件严格）——既有语义不变；
+        模型调用本身失败同样冒泡（worker 靠它做整块重试），这里不吞、不重试。
+
+    `msgs` 传进来即用，但对话在**本地副本**上追加：降级时用的是那份原封不动的带索引提示词。
+    """
+    assert ctx.knowledge is not None            # 调用点已判空；此处只为类型收窄
+    # 工具**按角色**取（《人际关系与场景推进》§6.3）：只有关系表非空的人才多一件
+    # update_relation——没有关系的人拿到的仍是三件套，请求体与今天逐字节相同。
+    tools = ctx.knowledge.tools(listener)       # 一次取定，各轮共用同一份定义
+    convo = list(msgs)
+    rounds = 0
+    calls_made = 0
+    try:
+        while True:
+            resp = await ctx.think.complete_turn(convo, tools=tools)
+            pending = resp.get("tool_calls") or []
+            if not pending:
+                return await _final_draft(ctx, resp, msgs)
+            convo.append(dict(resp))            # 原样回喂（reasoning_content 一起）
+            rounds += 1
+            for call in pending:
+                call_id = str(call.get("id") or "")
+                if calls_made >= MAX_TOOL_CALLS:
+                    convo.append({"role": "tool", "tool_call_id": call_id,
+                                  "content": _TOOL_BUDGET_TEXT})
+                    continue
+                calls_made += 1
+                fn = call.get("function") or {}
+                result = ctx.knowledge.execute(
+                    listener, str(fn.get("name") or ""), fn.get("arguments"), turn=turn)
+                convo.append({"role": "tool", "tool_call_id": call_id, "content": result})
+            if rounds >= MAX_TOOL_ROUNDS or calls_made >= MAX_TOOL_CALLS:
+                break
+        final = await ctx.think.complete_turn(convo)      # 不带 tools = 一次 complete_json
+        return await _final_draft(ctx, final, msgs)
+    except NotImplementedError:
+        return await ctx.think.complete_json(list(msgs))
 
 
 def _make_m3_nodes(ctx: GraphContext):
@@ -282,12 +449,18 @@ def _make_m3_nodes(ctx: GraphContext):
 
         私密回喂（I 阶段新链路）：构图前读本听众**自己**的记忆文件——近期状态尾部
         ≤5 条 + 对他人印象——拼进自己的 prompt，让私有倾向随状态演变。这两段只进
-        该听众本人的消息，绝不进共享态（§4.1）。结果同时写入：
+        该听众本人的消息，绝不进共享态（§4.1）。有信息库时另注入索引小节（系统消息
+        末尾，§6.1）并走工具循环取用（§6.3）；没库时整条路径与今天逐字节相同。
+        结果同时写入：
           · 私有记忆 state.jsonl（追加 urge，供引擎 dynamic_states 展示最近一次）；
           · ctx.think_log 只读边通道（speaker/at/heard/result，供 GUI，非角色互见）。
         """
         listener = state["listener"]
         last = state.get("last_chunk")
+        # 轮次标记（§6.1 截断式撤回）：私有记忆按**写入时的转录轮次**落盘，撤回某条推进
+        # 时引擎据此截断（memory.truncate_after_turn）；工具循环的取用记录 recall.jsonl 与
+        # 信息库条目也按同一轮次落盘，故这里提前取定（同一个值，语义不变）。
+        turn = int(state.get("turn", 0) or 0)
         # own_last：最近听到的一行是否正是自己说的（无人插话的自续/沉默机会）。
         # 是 → 告诉模型"那是你自己的话"，不要当别人来句回答，杜绝自问自答再抬冲动。
         own_last = bool(last is not None and last.get("speaker") == listener)
@@ -299,6 +472,14 @@ def _make_m3_nodes(ctx: GraphContext):
             think_kw["state_text"] = state_text
         if impressions_text:
             think_kw["impressions_text"] = impressions_text
+        # 信息库索引（§6.1）：仅 ctx.knowledge 非 None 时注入（放系统消息末尾，前缀缓存
+        # 不受索引增长影响）；没有信息库 → 传空串，提示词逐字节不变（硬约束）。
+        index_text = (ctx.knowledge.index_text(listener)
+                      if ctx.knowledge is not None else "")
+        # 人际关系（《人际关系与场景推进》§6.2）：**全部**关系行恒在上下文（每次都注入，
+        # 与索引的按需取用相反），拼在索引之前。没有信息库/没有关系 → 空串，逐字节不变。
+        relation_text = (ctx.knowledge.relation_text(listener)
+                         if ctx.knowledge is not None else "")
         # 场景公共信息（§3.3/§3.4）：背景/描述/剧情走向 + 语言指令——进场者看不到历史，
         # 但「这是个什么世界、现在什么走向」人人可见（这正是进场语义的另一半）。
         msgs = build_think_messages(
@@ -312,13 +493,15 @@ def _make_m3_nodes(ctx: GraphContext):
             description_text=ctx.scene.description,
             plot_text=ctx.scene.plot_direction,
             language_directive=ctx.language_directive,
+            index_text=index_text,
+            relation_text=relation_text,
         )
-        raw = await ctx.think.complete_json(msgs)          # 返回 dict
+        if ctx.knowledge is None:
+            raw = await ctx.think.complete_json(msgs)      # 老路：一次调用，逐字节不变
+        else:
+            # 有库：模型不需要查库时同样只花这一次（§6.3 的成本闸门），真调了工具才多付。
+            raw = await _think_raw_with_tools(ctx, listener, msgs, turn)
         tr = ThinkResult.model_validate(raw)               # 锁格式：非法即抛（无条件严格）
-        # 轮次标记（§6.1 截断式撤回）：私有记忆按**写入时的转录轮次**落盘，撤回某条推进
-        # 时引擎据此截断（memory.truncate_after_turn）——被丢弃的那段下文留下的私有解读
-        # 会经 next-think 回喂把丢弃内容带回提示词，必须一起消失。
-        turn = int(state.get("turn", 0) or 0)
         mem.append_state({"aroused": tr.aroused, "goal_progress": tr.goal_progress,
                           "addressed": tr.addressed,
                           "obligation_fulfilled": tr.obligation_fulfilled,
@@ -421,6 +604,17 @@ def _make_m3_nodes(ctx: GraphContext):
             speak_kw["state_text"] = state_text
         if impressions_text:
             speak_kw["impressions_text"] = impressions_text
+        # 信息库两段（§6.1 索引进系统消息 / §6.4 取用正文进用户消息）：think 与本块
+        # speak 是同一个角色的连续两步，think 阶段想起的东西要延续到开口——否则回忆完了
+        # 又失忆，那一轮取用的钱白花。没有信息库 → 两段都传空串，提示词逐字节不变。
+        recall_text = (ctx.knowledge.recall_text(name, state.get("turn", 0))
+                       if ctx.knowledge is not None else "")
+        index_text = (ctx.knowledge.index_text(name)
+                      if ctx.knowledge is not None else "")
+        # 人际关系与 think 同源同位置（§6.2）：开口前先知道"对面站的是谁"，这份与 think
+        # 阶段看到的是同一份。没有关系 → 空串，提示词逐字节不变。
+        relation_text = (ctx.knowledge.relation_text(name)
+                         if ctx.knowledge is not None else "")
         # 场景公共信息与 think 同源（§3.3/§3.4）：说话人也该带着世界观/场景描述/剧情
         # 走向开口——进场者尤其只有这些（他看不到进场前的对话）。
         msgs = build_speak_messages(ctx.cards[name], render_view(view),
@@ -430,18 +624,33 @@ def _make_m3_nodes(ctx: GraphContext):
                                     background_text=ctx.scene.background,
                                     description_text=ctx.scene.description,
                                     plot_text=ctx.scene.plot_direction,
-                                    language_directive=ctx.language_directive)
-        content = await ctx.speak.complete_text(msgs)
+                                    language_directive=ctx.language_directive,
+                                    index_text=index_text, recall_text=recall_text,
+                                    relation_text=relation_text)
+        turn = state.get("turn", 0)
+        if ctx.stream_speak:
+            # 流式（§二）：逐片收、逐片进接收器，最后拿**拼起来的完整文本**照旧走下面
+            # 全部既有逻辑（近重复抑制 / 落消息 / 写转录）——流式不改变真相。
+            content = await _speak_streamed(ctx, name, turn, msgs)
+        else:
+            content = await ctx.speak.complete_text(msgs)   # 今天那一句，逐字节不变
         # 近重复判定只看未撤销的历史：撤销了旧句不该把同一句永久钉成「复读」。
         if _is_near_repeat_of_own(live, name, content):
             # 近重复自我复读：不落盘（当作静默块返回）——GUI 事件门控随之看到「本块无新
             # 消息」卸下武装转等待，模型不再连篇自我复读烧 token。绝不收束/绝不报错。
+            # 流式下这句话**已经长在屏幕上了**（片在判定之前就吐出去了，判定要等整段收完），
+            # 故必须补一条 settled=False 的收尾标记：界面据此撤掉那个临时气泡，绝不留半条
+            # 正式消息（§2.3 的裁决：复读是罕见路径，偶发一次"话说一半消失了"划算得多）。
+            if ctx.stream_speak:
+                _append_speak_stream(ctx, name, turn, kind="end", settled=False)
             return {"silent_streak": state.get("silent_streak", 0) + 1}
         block = {"id": _next_id(all_msgs),
                  "speaker": name, "speaker_type": "character",
                  "content": content,
                  "in_scene": prev["in_scene"] if prev else ctx.space,
                  "turn": state.get("turn", 0)}
+        if ctx.stream_speak:                  # 收尾标记：这一块的话定稿了（settled=True）
+            _append_speak_stream(ctx, name, turn, kind="end", settled=True)
         for p in ctx.active_names():          # 可见者各自落转录（物理隔离）
             # 进场轴同视图：刚进场者不该把进场前的台词写进自己的转录（§3.3）。
             if _is_visible_to(block, p) and block["turn"] >= ctx.entry_round(p):
@@ -500,6 +709,9 @@ def build_graph(cards: dict[str, CharacterCard], scene: Scene,
                 entry_round_of: Callable[[str], int] | None = None,
                 language_directive: str = "",
                 space: str = "",
+                knowledge: KnowledgeAccess | None = None,
+                speak_stream: list | None = None,
+                stream_speak: bool = False,
                 ctx: GraphContext | None = None) -> object:
     """编译 LangGraph。checkpointer 缺省 MemorySaver（测试/单进程内存）；
     生产/SceneEngine 传入 AsyncSqliteSaver（graph 全走 async API）。bid_params 缺省
@@ -521,6 +733,15 @@ def build_graph(cards: dict[str, CharacterCard], scene: Scene,
     者，后者返回该角色的进场基线（见 GraphContext 文档）。
 
     language_directive：语言指令（§7），透传进 ctx，think/speak 各带一份。
+    knowledge：可选信息库取用通道（§6.1/§6.3/§6.4），透传进 ctx。缺省 None = **没有
+    信息库**——索引不注入、think 走一次 complete_json、speak 不带取用小节，与引进信息库
+    之前逐字节、逐调用次数相同（老调用方/离线路径的硬约束）。引擎路径传它的
+    `KnowledgeAccess`（见 SceneEngine._knowledge）；显式传 ctx 时以 ctx 上的那份为准
+    （引擎两份都传，同一实例）。
+    speak_stream / stream_speak：speak 的**流式接收器**与开关（§二）。缺省
+    `stream_speak=False` = 走今天那一句 `complete_text`，接收器一个条目都不追加
+    （裸图/离线路径/老调用方因此逐字节不变）；引擎路径传自有的 `self._speak_stream`
+    与用户设置里的开关。
     ctx：可选**外部自持**的 GraphContext（引擎注入）。引擎要在运行期改语言指令
     （set_language，提示词立即生效，不必重建图），故 ctx 由引擎持有、这里复用；缺省
     内部自建 = 既有行为一字不变（裸图/离线测试）。
@@ -531,7 +752,10 @@ def build_graph(cards: dict[str, CharacterCard], scene: Scene,
                            think_log=think_log if think_log is not None else [],
                            demo_alternate=demo_alternate, bidder=bidder,
                            cast_provider=cast_provider, entry_round_of=entry_round_of,
-                           language_directive=language_directive, space=space)
+                           language_directive=language_directive, space=space,
+                           knowledge=knowledge,
+                           speak_stream=speak_stream if speak_stream is not None else [],
+                           stream_speak=stream_speak)
     (fan_out, emit_thinks, think, deliberate, route_after_deliberate,
      speak, silence_gate, world) = _make_m3_nodes(ctx)
     g = StateGraph(GraphState)

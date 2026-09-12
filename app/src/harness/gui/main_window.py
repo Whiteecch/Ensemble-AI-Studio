@@ -60,7 +60,10 @@ worker 载荷带了当前值时以它为准）与「推进一下」手动按钮�
 取消则零改动；② 撤回/改写让对白区**从该条起截断**（`_drop_from`）——sig_retracted 只报
 被撤的那一个 id，只按 id 摘一行会把回溯产生的整段尾巴留在屏上，故改成就地截断留存。
 
-**顶栏菜单（仿 VSCode，设计文档 §2.1）**：`设置 / 场景 / 角色` 三段，顺序固定。
+**顶栏菜单（仿 VSCode，设计文档 §2.1）**：`设置 / 场景 / 角色` 三段（顺序固定）
++ 「信息库…」（§8.1 的编辑器入口，顶级项：选一座库 → 编辑，见
+`_on_open_knowledge_editor`）+ 「关系…」（《人际关系与场景推进》§6.1 的关系表编辑器，
+同一范式：选一座**角色库** → 编辑那个角色的关系，见 `_on_open_relations_editor`）。
 · 设置：模型 api 配置…（弹窗，含**后台线程**拉取 `{url}/models`）、配色、语言、
   自动保存周期——三项子菜单都是**互斥勾选**组，选中即落盘 SettingsStore 并即时生效
   （配色当场 setStyleSheet；语言**当场重译整个界面**：见 `_retranslate`）。
@@ -72,8 +75,9 @@ worker 载荷带了当前值时以它为准）与「推进一下」手动按钮�
   N 回合后执行 + 可多选的通知对象）。
   未开场（worker.can_cast() 为假）或还没收到演员表时，「添加/移出」两项禁用并给出原因。
 · 导入（场景/角色同一个流程）：文件选择 → `template_import.import_template_file`（落进
-  角色库/场景库目录）→ 结果框（含「以下字段模板里没填，已用默认值：…」）→ 刷新菜单。
-  解析失败只弹一句带行号/字段名的中文说明，绝不把 traceback 摊到界面上。
+  角色库/场景库/信息库目录——**三个目录都传全**，信息库模板的落点由库根唯一定死）→
+  结果框（含「以下字段模板里没填，已用默认值：…」）→ 刷新菜单。解析失败只弹一句带
+  行号/字段名的中文说明，绝不把 traceback 摊到界面上。
 
 **场景变更进日志**（§3.5）：worker 的 `sig_scene_changed(list)`（字段名/旧值/新值）到达
 时，每条在日志窗格里落一行「场景变更 · <字段> → <新值>」，用**浅红**高亮（按日志底色明暗
@@ -97,6 +101,23 @@ worker 载荷带了当前值时以它为准）与「推进一下」手动按钮�
 「你将使用<语言>回答。」注入所有提示词。动态内容（对白/叙述/think 日志/角色名/数值）
 是**内容**不是界面文案，不参与重译。zh-Hans 下逐字与接线前完全一致。
 
+**流式开口与吐字气泡**（《人际关系与场景推进》§2.4/§2.5）：开启流式时 worker 逐片发
+`sig_speak_delta`——窗口**只攒不画**（片进 `_stream_raw`，一次界面都不碰：SSE 的片是突发
+到达的，跟着它重绘就是一顿一顿的）；该块**全量收完**（`sig_speak_end` 带 `settled=True`）
+才起一枚 QTimer **匀速吐字**（每 `STREAM_TICK_MS` 一跳、每跳重绘一次；长台词按
+`STREAM_MAX_MS` 加速，否则一句长台词要吐十几秒）。该块的正式消息（`sig_message`）到达时
+若吐字还在跑，**先扣住**（不按正式行渲染；但**当刻就按最终位置入留存**——否则扣住窗口里
+上屏的任何一行都会排到它前面，见 `_hold_message`），吐完那一刻**无缝换成正式行**——文本
+同源、HTML 同形（`_format_streaming` 复用 `_format_message`，绝不把样式再抄一遍）。该块被判
+复读而整块作废时（`settled=False`）**不吐、直接撤**，不留半条消息（§2.3）。开关在「设置 →
+流式开口」，**缺省关**：不开启时没有任何片信号（没有定时器、没有缓冲、没有扣留），窗口
+行为与今天逐字节相同（见 `apply_stream_speak` 的理由）。
+
+**诊断收进日志**（§三）：中栏顶部另有一块**场景诊断区**（最近一条 hook/tool/save
+诊断），**只在日志面板开着时**显示——关着时整块收起、不保留高度（不是那种把布局顶来
+顶去的"隐藏但保留高度"做法）。诊断本身照旧进日志窗格留档；它**不再**占住顶部的状态
+药丸（那个位置归"进行中/已暂停/开场失败"这类运行状态）。
+
 样式基调：冷调「仪器」浅色（近白面 + 发丝线 + 单一去饱和蓝青强调，§3.6），圆角、留白克制。
 配色全部由当前主题的色表给出（`theme.palette_for(主题)`）：窗口样式表走 `theme_qss`，
 **内容**则用色表取值——对白/日志 HTML 的颜色、左右栏程序化配色的标签（键值行/冲动行/
@@ -106,7 +127,7 @@ worker 载荷带了当前值时以它为准）与「推进一下」手动按钮�
 `_set_model_badge` 重画药丸）。
 全部数据经 SceneWorker 信号进入（sig_scene_info / sig_message / sig_metrics /
 sig_status / sig_dynamics / sig_think / sig_narration / sig_retracted / sig_finished /
-sig_saved / sig_cast / sig_auto_paused / sig_scene_diag）。
+sig_saved / sig_cast / sig_auto_paused / sig_scene_diag / sig_speak_delta / sig_speak_end）。
 """
 from __future__ import annotations
 
@@ -117,7 +138,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QUrl, Signal
+from PySide6.QtCore import Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QActionGroup
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -132,12 +153,16 @@ from ..i18n import DEFAULT_LANGUAGE, LANGUAGES, Translator
 from ..loaders import (list_character_paths, list_scene_paths,
                        load_character_card, load_json, load_scene)
 from ..template_import import TemplateError, import_template_file
+from .knowledge_editor import (
+    KnowledgeEditorDialog, LibraryPickerDialog, default_libraries_root)
 from .library import (
     CharacterDetailDialog, CharacterEditorDialog, LibraryDialog,
     SceneEditorDialog, app_theme, confirm, import_result_text, info,
     translator as gui_translator, validate_materials, warn)
+from .relations_editor import (RelationsEditorDialog, RelationsPickerDialog)
 from .settings import (AUTOSAVE_EVERY, NARRATE_ACTIVITIES, AppSettings,
                        SettingsStore, snap_narrate_activity)
+from .settlement_dialog import SettlementDialog
 from .theme import (THEMES, dialog_qss, palette_for, speaker_colors_for,
                     theme_qss)
 
@@ -148,6 +173,21 @@ _APP_DIR = Path(__file__).resolve().parents[3]
 #: ——界面不留字面色）。取名只为可读性：**实际取色一律走 speaker_palette(主题)**。
 PALETTE = list(speaker_colors_for("默认"))
 PALETTE_DARK = list(speaker_colors_for("深色"))
+
+#: 吐字节拍（§2.4）：每 `STREAM_TICK_MS` 毫秒推进一次「已显示」计数并重绘一次。
+#: 取 40ms ≈ 25 字/秒——比朗读略慢、比手打快，观感是"在说"而不是"在刷"；再快就没有逐字
+#: 出现的味道，再慢（60ms 起）中文长句会显得拖。**与网络分片彻底解耦**：片怎么抖都不影响
+#: 这个节奏（接收侧只攒不画，见 `_on_speak_delta`）。
+STREAM_TICK_MS = 40
+
+#: 吐字**加速上限**（§2.4）：整句必须在这个毫秒数内吐完，超出就每跳多吐几个字
+#: （见 `MainWindow._stream_step`）。没有这一条，一句 300 字的台词要吐 12 秒——用户会
+#: 以为界面卡死了。
+STREAM_MAX_MS = 2500
+
+#: 整句最多吐几跳（= `STREAM_MAX_MS // STREAM_TICK_MS`）。每跳字数 = ceil(总字数 / 它)，
+#: 故"吐完耗时"恒 ≤ `STREAM_MAX_MS`（不足一跳的余数由向上取整吸收）。
+STREAM_MAX_TICKS = max(1, STREAM_MAX_MS // STREAM_TICK_MS)
 
 #: 程序化配色的**语义角色** → 样式表生成器（以当前主题的 Palette 填色）。
 #: 界面里凡是用 setStyleSheet 手工上色的部件都按角色登记（见 MainWindow._pstyle）：
@@ -205,6 +245,14 @@ NARRATE_ACTIVITY_LEVELS: tuple[tuple[str, float], ...] = tuple(zip(
 
 #: 计数改用 k 单位的门槛：≥ 此值（十万）才缩写成「NNNk」，低于则原样显示。
 K_UNIT_THRESHOLD = 100_000
+
+
+def _to_int(value) -> int:
+    """宽容地把一个载荷字段读成整数（读不出来当 0）——跨线程来的脏值不该让界面抛。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def fmt_count(n: int | str) -> str:
@@ -860,13 +908,17 @@ class CharacterManagerDialog(QDialog):
     COLUMN_KEYS = ("col.name", "col.present", "col.muted")
 
     def __init__(self, cast: dict | None = None, worker=None,
-                 characters_dir: Path | None = None, parent=None):
+                 characters_dir: Path | None = None, parent=None,
+                 *, libraries_root: Path | None = None):
         super().__init__(parent)
         t = gui_translator()
         self._cast = dict(cast or {})
         self._worker = worker
         self._characters_dir = (Path(characters_dir) if characters_dir
                                 else Path("."))
+        #: 信息库根（可注入）：只是转交给角色编辑器（订阅区要用），本弹窗自己不看它。
+        self._libraries_root = (Path(libraries_root) if libraries_root is not None
+                                else None)
         self.setWindowTitle(t.t("dlg.manage_cast_title"))
         self._body, self._foot = _prepare_dialog(self, size=(560, 420))
 
@@ -1010,7 +1062,8 @@ class CharacterManagerDialog(QDialog):
         except (OSError, ValueError) as exc:
             warn(self, t.t("btn.edit_character"), t.t("err.card_unreadable", exc=exc))
             return
-        dlg = CharacterEditorDialog(card, self._characters_dir, self)
+        dlg = CharacterEditorDialog(card, self._characters_dir, self,
+                                    libraries_root=self._libraries_root)
         dlg.exec()
 
     def _on_delete(self) -> None:
@@ -1038,15 +1091,16 @@ class CharacterManagerDialog(QDialog):
 
 
 class AdvancedCastDialog(QDialog):
-    """角色 →「高级移入/移出…」（§2.1③）：选人 + 移入/移出 + N 回合后执行 + 通知。
+    """角色 →「高级移入/移出…」（§2.1③）：选人 + 移入/移出 + N 回合后执行 + 原因 + 通知。
 
     「通知」勾上后可**多选**通知对象 = 在场角色 + 该角色自己 + 「场景」（引擎把 notify 当
     认知轴 knows 名单：只有名单里的人看得见这条通知行；「场景」= 不进任何角色的视野，见
-    SCENE_NOTIFY_NAME）。点「确定」→ worker.schedule_cast_change(...)（延时执行全在引擎
+    SCENE_NOTIFY_NAME）。「原因」（§5.1）是**只交给当事人自己**的进离场理由，随动作一起
+    入队、留空即今天的行为。点「确定」→ worker.schedule_cast_change(...)（延时执行全在引擎
     侧排队，界面只投递意图，绝不直接调引擎）。
 
     程序化填充与测试用部件名：name_combo / add_radio / remove_radio / rounds_spin /
-    notify_check / recipients / notify_text_edit / ok_btn / cancel_btn；
+    reason_edit / notify_check / recipients / notify_text_edit / ok_btn / cancel_btn；
     chosen_action() / checked_recipients() 供断言。
     """
 
@@ -1097,6 +1151,15 @@ class AdvancedCastDialog(QDialog):
         tip.setObjectName("hint")
         when_row.addWidget(tip, 1)
         self._body.addWidget(when_box)
+
+        # 进离场原因（§5.1）：与 HookEditorDialog.reason_edit 同一套文案与交互——留空即
+        # 今天的行为（引擎一个字都不落、也不多一次调用）。它只交给当事人自己（§5.2），
+        # 所以标签里必须把「别人看不到」讲出来，否则用户会以为这是给全场看的叙述。
+        # 本弹窗的动作只有「移入/移出」两种，原因对两者都成立，故不随动作禁用。
+        self._body.addWidget(QLabel(t.t("field.cast_reason")))
+        self.reason_edit = QLineEdit()
+        self.reason_edit.setPlaceholderText(t.t("label.please_reason"))
+        self._body.addWidget(self.reason_edit)
 
         note_box = QGroupBox(t.t("grp.notify"))
         note_v = QVBoxLayout(note_box)
@@ -1200,9 +1263,11 @@ class AdvancedCastDialog(QDialog):
         # 没勾「通知」就不带文案：引擎只在 notify 非空时落通知行（§4.1②），带一句用不上
         # 的话只会让预约队列里多一份无意义的载荷。
         text = self.notify_text_edit.text().strip() if notify else ""
+        # 原因（§5.1）随动作一起入队；留空 = 与今天逐字节相同（引擎侧 reason="" 不落行）。
         self._worker.schedule_cast_change(
             name, self.chosen_action(), int(self.rounds_spin.value()),
-            notify=notify, notify_text=text)
+            notify=notify, notify_text=text,
+            reason=self.reason_edit.text().strip())
         self.accept()
 
 
@@ -1214,10 +1279,16 @@ class MainWindow(QMainWindow):
     language_changed = Signal(str)
 
     def __init__(self, worker, cfg: AppConfig, settings: AppSettings | None = None,
-                 store: SettingsStore | None = None) -> None:
+                 store: SettingsStore | None = None,
+                 libraries_root: Path | None = None) -> None:
         super().__init__()
         self._worker = worker
         self._cfg = cfg
+        #: 信息库根（§13.3，可注入）：缺省沿用引擎侧那套 `parents[3]` 惯例
+        #: （`knowledge_editor.default_libraries_root` 读的就是 worker 用的那个值，
+        #: 编辑器与引擎绝不各指一处）。测试一律注入 tmp，绝不碰仓库的 app/libraries/。
+        self._libraries_root_override = (Path(libraries_root)
+                                         if libraries_root is not None else None)
         # 设置存储放在**构造时**解析缺省路径（SettingsStore() → default_settings_path()）：
         # 这样测试 monkeypatch 默认路径即刻生效，也保证「一份设置贯穿整个窗口生命周期」。
         self._store = store if store is not None else SettingsStore()
@@ -1292,6 +1363,46 @@ class MainWindow(QMainWindow):
         self._conv_msgs: list[dict] = []
         # 最近一次 sig_narration 快照（左栏「场景推进」状态行据此刷新；指标刷新时复读）。
         self._narration: dict = {}
+        #: **接收侧的原始缓冲**（§2.4）：`sig_speak_delta` 的片只往这里追加，**绝不触碰
+        #: 界面**（跟着网络分片重绘就是一顿一顿的）。该块全量收完（收尾标记 settled=True）
+        #: 时被"抬"成吐字状态（`_stream`）并置回 None。{"speaker","turn","text"}。
+        self._stream_raw: dict | None = None
+        #: **吐字中的那一条**（§2.4/§2.5）：{"speaker","turn","full","text","time_hhmmss",
+        #: "anchor"}，或 None（没有人在说话）。`text` 是**已显示的前缀**、`full` 是整句（与
+        #: 权威正文同源），渲染时构造一份伪消息喂给 `_format_message`——故与正式角色气泡
+        #: **逐字节同形**（改正式气泡的样式，吐字气泡自动跟着变）；`time_hhmmss` 取正式消息
+        #: 给的那个（还没到就不带）。`anchor` = 开吐那一刻留存的长度，即这条气泡**该在的位置**
+        #: （此刻其后的一切都还没发生）——正式消息还没到就有别的行上屏时（罕见），气泡照它
+        #: 摆位，于是"后来发生的排在它下面"这条不变量与正式行换上来的那一帧也一致。它**不是**
+        #: 对白留存的一部分（不进 `_conv_msgs`）：必须能整块消失。
+        self._stream: dict | None = None
+        #: 吐字定时器（惰性建、跨块复用）：**只在该有气泡时活着**——吐完/被撤/换场/关窗/
+        #: 收束一律停表（`_clear_stream_state`），绝不让它活过它所属的那一块。测试可绕开
+        #: 真实等待，直接手动调 `_stream_tick`（见 tests/test_gui_stream.py）。
+        self._stream_timer: QTimer | None = None
+        #: **被扣住的正式消息**（§2.4 收尾）：吐字进行中到达的那条权威消息。扣住 = **不按正式
+        #: 行渲染**（否则屏上会同时出现"吐到一半的气泡"和"完整的正式行"），吐完那一刻由
+        #: `_stream_finish` 无缝换成它。但它在到达的**当刻就进留存**（`_hold_message` 把它插在
+        #: 气泡该在的位置上）——若等到吐完才入留存，就只能 append 到末尾，而扣住窗口里但凡
+        #: 又上屏一行（用户插话/场景叙述/导演行），那条**先发生的**台词就被永久排到它后面，
+        #: 对白区次序与引擎 id 次序相反、时间戳倒流（`_drop_from` 的位置截断也会据此吃掉引擎
+        #: 仍保留的那一句）。这里是那份 dict 对象本身（身份比对），渲染时据此跳过、改画气泡。
+        self._held_msg: dict | None = None
+        #: **已落地的块**集合：每条正式消息的 (speaker, turn)。流式片只带说话人与轮次
+        #: （不带消息 id），而同一块的片与它落下的那条消息 (speaker, turn) 恒相同
+        #: （graph.speak 里两者同源）——于是"这块已经有正式行了"可判：旧块的余片不许再
+        #: 开气泡、settled=True 的收尾标记一看它已落地就直接撤。这是**与 worker 侧派发
+        #: 次序无关的第二道闸**：worker 修的是"片必须先于消息"（引擎时序），这里修的是
+        #: "无论什么次序都不留半条"（§2.3）。**按块逐个记，不是单槽**：单槽只记"最后一条
+        #: 落地的消息"，中间夹进一条别人的正式消息就漏，已落地那块的余片照常开出一条再也
+        #: 收不掉的幽灵气泡。turn 不是整数（老载荷/手工投信号）时不记，保持既有行为。
+        self._stream_landed: set[tuple[str, int]] = set()
+        #: 流式开口开关的镜像（权威值在 worker/设置）：勾选菜单项时同步。
+        self._stream_speak = bool(self._settings.stream_speak)
+        #: 场景诊断区的**文本**（最近一条 hook/tool/save 诊断；空串 = 还没诊断）。
+        #: 留住原文而不是只有渲染后的 HTML：切语言要按新语言重译前缀，且开关日志面板
+        #: 时要立刻把最新一条摆上去。
+        self._scene_diag_text = ""
         #: worker 报过的作废 id 集合（§6.1 回溯式撤回；含 sig_retracted 与叙述状态载荷里
         #: 的权威 `retracted` 全量）：对白区据此摘行，且**换场/重置即清**（新场从零起算）。
         self._retracted_ids: set[int] = set()
@@ -1300,6 +1411,13 @@ class MainWindow(QMainWindow):
         self._scene_diag: dict = {}
         self._diag_seen: dict[str, str] = {}
         self._implicit_seen: tuple | None = None
+        # 散场结算（§7.3/§8.3）：待决角色行（名 → 行，供「结算待决…」菜单项开窗用）与
+        # 最近一次从引擎拿到的结算警告（弹窗里要显示——点完保留却什么都没发生而界面不吭声
+        # 是用户最没法自查的收场）。镜像自 worker 的 sig_settlement_pending / hint。
+        self._pending_settlement: dict[str, dict] = {}
+        self._settlement_warnings: list[str] = []
+        #: 主线程开着的结算弹窗（防重入/防被 GC；关掉置回 None）。测试**绝不真 exec**。
+        self._settlement_dialog = None
         #: 日志窗格的**结构化留存**（think 条目 / 诊断行）：切主题要重排上色，故留原文
         #: 而不是渲染后的 HTML（HTML 的颜色烘死在字符串里，重排等于没换色）。
         self._log_entries: list[dict] = []
@@ -1351,6 +1469,8 @@ class MainWindow(QMainWindow):
         # 推进活跃度也在开场前推给 worker（与 api 配置同款）：worker 记期望值，第一场
         # 建引擎时即带上——「上次调到多高」从此开局就生效，不必再动一次控件。
         self.apply_narrate_activity(self._narrate_activity, persist=False)
+        # 流式开口开关同样在开场前推给 worker（同款：它只是记期望值，第一场建引擎时带上）。
+        self.apply_stream_speak(self._stream_speak, persist=False)
         self._enable_input(False)
         self._set_status_chip("就绪")
         self._set_model_badge("stub")
@@ -1468,6 +1588,14 @@ class MainWindow(QMainWindow):
         log_btn = getattr(self, "_log_btn", None)
         if log_btn is not None:
             log_btn.setText(t.t("btn.log_on") if log_btn.isChecked() else t.t("btn.log"))
+        # 顶部诊断区的前缀（「场景诊断：」）随语言重译。
+        if getattr(self, "_scene_diag_text", ""):
+            self._set_scene_diag_text(self._scene_diag_text)
+        # 吐字中/扣住的行也要重绘：配色与角色名取色是渲染时烘死的（§2.5 复用正式气泡那套）。
+        if (getattr(self, "_stream", None) is not None
+                or getattr(self, "_held_msg", None) is not None) and \
+                getattr(self, "_view", None) is not None:
+            self._rerender_conversation()
         pause_btn = getattr(self, "_pause_btn", None)
         if pause_btn is not None:
             pause_btn.setText(t.t(self._pause_button_key()))
@@ -1508,7 +1636,12 @@ class MainWindow(QMainWindow):
                             (getattr(self, "_action_new_character", None), "menu.new_character"),
                             (getattr(self, "_action_import_character", None), "menu.import_character"),
                             (getattr(self, "_action_manage_characters", None), "menu.manage_characters"),
-                            (getattr(self, "_action_advanced_cast", None), "menu.advanced_cast")):
+                            (getattr(self, "_action_advanced_cast", None), "menu.advanced_cast"),
+                            (getattr(self, "_action_settle_pending", None), "menu.settle_pending"),
+                            (getattr(self, "_action_knowledge", None), "menu.knowledge"),
+                            (getattr(self, "_action_relations", None), "menu.relations"),
+                            (getattr(self, "_action_stream_speak", None),
+                             "menu.stream_speak")):
             if action is not None:
                 action.setText(t.t(key))
         action = getattr(self, "_action_manage_scenes", None)
@@ -1541,6 +1674,16 @@ class MainWindow(QMainWindow):
         action = getattr(self, "_action_reset_scene", None)
         if action is not None:
             action.setToolTip(t.t("tip.reset_scene"))
+        action = getattr(self, "_action_knowledge", None)
+        if action is not None:
+            action.setToolTip(t.t("tip.knowledge"))
+        action = getattr(self, "_action_relations", None)
+        if action is not None:
+            action.setToolTip(t.t("tip.relations"))
+        action = getattr(self, "_action_stream_speak", None)
+        if action is not None:
+            action.setToolTip(t.t("tip.stream_speak"))
+        self._refresh_settle_action()      # 待决项的 tooltip 也按新语言出字（有无待决两种）
         for every, act in getattr(self, "_autosave_actions", {}).items():
             act.setText(t.t("menu.autosave_every", n=every))
         # 动态子菜单（场景库 / 添加·移出角色）重扫一次：项文本与禁用理由按新语言重建。
@@ -1551,7 +1694,12 @@ class MainWindow(QMainWindow):
 
     # ================================================================== 菜单栏
     def _build_menus(self) -> None:
-        """建顶栏：`设置 / 场景 / 角色`（顺序固定，见设计文档 §2.1）。"""
+        """建顶栏：`设置 / 场景 / 角色 / 信息库…`（前三段顺序固定，见设计文档 §2.1）。
+
+        第四项是**信息库编辑器**的入口（§8.1/§8.4）：它不是一个下拉菜单（目前只有"编辑"
+        一个动作），而是一个直接开选择器的顶级项——菜单栏上多一段而不是在别处塞一项，
+        免得又把"场景/角色"那两段的顺序与项数弄漂。
+        """
         bar = self.menuBar()
         self._menu_settings = bar.addMenu(self._t.t("menu.settings"))
         self._menu_scene = bar.addMenu(self._t.t("menu.scene"))
@@ -1559,6 +1707,17 @@ class MainWindow(QMainWindow):
         self._build_settings_menu(self._menu_settings)
         self._build_scene_menu(self._menu_scene)
         self._build_character_menu(self._menu_character)
+        self._action_knowledge = QAction(self._t.t("menu.knowledge"), self)
+        self._action_knowledge.setToolTip(self._t.t("tip.knowledge"))
+        self._action_knowledge.triggered.connect(self._on_open_knowledge_editor)
+        bar.addAction(self._action_knowledge)
+        # 第五段：**人际关系编辑器**（《人际关系与场景推进》§6.1）。与「信息库…」同一
+        # 范式（顶级项 → 先选一座角色库 → 开两栏编辑器），故并列在它后面而不是塞进
+        # 「角色」菜单：那一段的项数与顺序被既有用例钉着，多一项会把它整体推偏。
+        self._action_relations = QAction(self._t.t("menu.relations"), self)
+        self._action_relations.setToolTip(self._t.t("tip.relations"))
+        self._action_relations.triggered.connect(self._on_open_relations_editor)
+        bar.addAction(self._action_relations)
 
     def _build_settings_menu(self, menu: QMenu) -> None:
         """设置菜单：模型 api 配置… + 配色/语言/自动保存周期三组互斥勾选子菜单。"""
@@ -1612,10 +1771,20 @@ class MainWindow(QMainWindow):
             self._autosave_menu.addAction(act)
             self._autosave_actions[int(every)] = act
 
+        # ---- 流式开口（§二．8）：勾选即台词逐字出现（**缺省不勾**）----
+        # 放进设置菜单而不是左栏控件：它是一个"呈现偏好"，不是运行控制（暂停/推进才是）。
+        menu.addSeparator()
+        self._action_stream_speak = QAction(self._t.t("menu.stream_speak"), self)
+        self._action_stream_speak.setCheckable(True)
+        self._action_stream_speak.setToolTip(self._t.t("tip.stream_speak"))
+        self._action_stream_speak.toggled.connect(self.apply_stream_speak)
+        menu.addAction(self._action_stream_speak)
+
         # 勾选态 = 已加载的设置（**不**回写盘：这只是镜像启动值）。
         self.apply_theme(self._theme, persist=False)
         self.apply_language(self._language, persist=False)
         self.apply_autosave(self._autosave_every, persist=False)
+        self.apply_stream_speak(self._stream_speak, persist=False)
 
     def _build_scene_menu(self, menu: QMenu) -> None:
         """场景菜单（顺序固定，§3.3）：打开场景 / 配置场景… / 保存场景 / 重置运行上下文… /
@@ -1707,7 +1876,16 @@ class MainWindow(QMainWindow):
         self._action_advanced_cast.triggered.connect(self._on_advanced_cast)
         menu.addAction(self._action_advanced_cast)
 
+        # 「结算待决…」（§7.3）：离场的人**不弹窗**，只给一条不打断的提示；他随时可以
+        # 从这里的菜单里单独结算。没有待决内容时整项禁用并说明原因（绝不点开一个空窗）。
+        self._action_settle_pending = QAction(self._t.t("menu.settle_pending"), self)
+        self._action_settle_pending.setToolTip(self._t.t("tip.settle_pending"))
+        self._action_settle_pending.setEnabled(False)
+        self._action_settle_pending.triggered.connect(self._on_settle_pending)
+        menu.addAction(self._action_settle_pending)
+
         self._refresh_cast_menus()
+        self._refresh_settle_action()
 
     # ------------------------------------------------------- 演员表菜单（动态）
     def _disabled_item(self, text: str, tip: str = "") -> QAction:
@@ -1903,6 +2081,30 @@ class MainWindow(QMainWindow):
         setter = getattr(self._worker, "set_narrate_activity", None)
         if callable(setter):
             setter(value)
+
+    def apply_stream_speak(self, on: bool, *, persist: bool = True) -> None:
+        """流式开口开关（§二．8）：勾选即台词逐字出现；落盘 + **投给 worker**。
+
+        **缺省为什么是关**（settings.DEFAULT_STREAM_SPEAK 有完整理由，此处一句）：流式是
+        **新增的呈现通道**，而本特性的第一铁律是"不开启时从后端调用到事件流到界面逐字节、
+        逐事件、逐调用次数与今天相同"——缺省关，这句铁律在默认配置下就是事实。打开它的代价
+        也真实（§2.4 明说了不藏着）：**模型的这一段全量收完才开始显示**，故没有"边想边说"
+        的中间态；换来的是节奏恒定、不卡（片怎么抖都按 40ms 一跳吐）。
+        运行期**关**掉时，正在吐的那一块照旧吐完（那一段的片已经在手里了，掐掉就是"话说到
+        一半没了"）；worker 侧从此不再发片，下一块起自然回到老路——不额外动界面状态。
+        persist=False 用于启动回读（值是设置里来的，不该反手再写一次盘）。
+        """
+        self._stream_speak = bool(on)
+        act = getattr(self, "_action_stream_speak", None)
+        if act is not None and act.isChecked() != self._stream_speak:
+            act.blockSignals(True)           # 镜像同步：绝不反手再投一次 worker
+            act.setChecked(self._stream_speak)
+            act.blockSignals(False)
+        if persist:
+            self._store.update(stream_speak=self._stream_speak)
+        setter = getattr(self._worker, "set_speak_stream", None)
+        if callable(setter):
+            setter(self._stream_speak)
 
     def _select_activity(self, level: float) -> None:
         """把控件切到该档（阻塞信号：这是镜像同步，不该反手再投一次给 worker）。"""
@@ -2243,7 +2445,8 @@ class MainWindow(QMainWindow):
         try:
             result = import_template_file(
                 Path(filename), characters_dir=self._characters_dir(),
-                scenes_dir=self._scenes_dir())
+                scenes_dir=self._scenes_dir(),
+                libraries_dir=self._libraries_root())
         except TemplateError as exc:
             # TemplateError.__str__ 就是「第 N 行附近 字段【X】：消息」，可直接给用户看。
             warn(self, t.t("dlg.import_failed"), str(exc) or exc.__class__.__name__)
@@ -2299,10 +2502,13 @@ class MainWindow(QMainWindow):
         self._log_view.clear()
         self._log_entries = []
         self._conv_msgs = []
+        self._clear_stream_state()       # 吐字状态（气泡/缓冲/定时器）不属于留存，close 时一并丢
+        self._stream_landed = set()     # 落地集同清（新场的轮次从头起算）
         self._retracted_ids = set()      # 屏上已空 → 作废集从零起算
         self._narration = {}
         self._scene_diag = {}
         self._diag_seen = {}
+        self._set_scene_diag_text("")
         self._implicit_seen = None
         self._cast = None
         self._char_payloads = {}
@@ -2343,7 +2549,8 @@ class MainWindow(QMainWindow):
         只落卡、不动本场演员表：要让新卡上场，用「添加角色」把它加进这一场（或下一场
         开场时选它）。保存成功后顺手刷新「添加角色」子菜单，新卡当场可选。
         """
-        dlg = CharacterEditorDialog(None, self._characters_dir(), self)
+        dlg = CharacterEditorDialog(None, self._characters_dir(), self,
+                                    libraries_root=self._libraries_root())
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.saved_path is not None:
             self._set_status_chip(
                 self._t.t("status.saved_card", name=Path(dlg.saved_path).name),
@@ -2369,7 +2576,8 @@ class MainWindow(QMainWindow):
         只是 worker 调用；worker 事后广播的 sig_cast 会经 _on_cast 喂回弹窗重画表格。
         """
         dlg = CharacterManagerDialog(self._cast or {}, self._worker,
-                                     self._characters_dir(), self)
+                                     self._characters_dir(), self,
+                                     libraries_root=self._libraries_root())
         self._cast_manager = dlg
         try:
             dlg.exec()
@@ -2619,6 +2827,23 @@ class MainWindow(QMainWindow):
         sa = QVBoxLayout(self._session_area)
         sa.setContentsMargins(0, 0, 0, 0)
         sa.setSpacing(10)
+        # ---- 场景诊断区（§三）：**只在日志面板打开时**显示 ----
+        # 它是中栏顶部的一行小字（最近一条 hook/tool/save 诊断）。可见性跟随「日志」开关：
+        # 关着时整块 `setVisible(False)`——**不保留高度**（"隐藏但保留高度"会把中栏顶部
+        # 永远空出一条，把对白区顶住，切来切去还会把布局顶得跳）；开着时它自己占一行。
+        # 没有诊断可显示（还没出过诊断）时也不显示，免得留一条空条。
+        self._scene_diag_area = QWidget()
+        diag_lay = QHBoxLayout(self._scene_diag_area)
+        diag_lay.setContentsMargins(2, 0, 2, 0)
+        diag_lay.setSpacing(6)
+        self._scene_diag_label = QLabel("")
+        self._scene_diag_label.setObjectName("sceneDiag")
+        self._scene_diag_label.setWordWrap(True)
+        self._pstyle(self._scene_diag_label, "warn12")
+        diag_lay.addWidget(self._scene_diag_label, 1)
+        self._scene_diag_area.setVisible(False)      # 日志面板缺省关着 → 不占位
+        sa.addWidget(self._scene_diag_area)
+
         self._center_split = QSplitter(Qt.Orientation.Vertical)
         self._center_split.setChildrenCollapsible(False)
         self._log_view = QTextBrowser()
@@ -2761,11 +2986,30 @@ class MainWindow(QMainWindow):
         sig_scene_diag = getattr(self._worker, "sig_scene_diag", None)
         if sig_scene_diag is not None:
             sig_scene_diag.connect(self._on_scene_diag)
+        # 流式开口（§二）：片与收尾两条信号都是新加的，替身 worker / 未落地的版本可能
+        # 没有，故防御式连接（缺它们时本窗口的既有行为一字不变）。
+        sig_speak_delta = getattr(self._worker, "sig_speak_delta", None)
+        if sig_speak_delta is not None:
+            sig_speak_delta.connect(self._on_speak_delta)
+        sig_speak_end = getattr(self._worker, "sig_speak_end", None)
+        if sig_speak_end is not None:
+            sig_speak_end.connect(self._on_speak_end)
         # 场景变更（§3.5）：场景 agent 改了场景信息 → 日志面板一条浅红记录。同样是新加的
         # 信号，替身 worker / 未落地的版本可能没有，故防御式连接。
         sig_scene_changed = getattr(self._worker, "sig_scene_changed", None)
         if sig_scene_changed is not None:
             sig_scene_changed.connect(self._on_scene_changed)
+        # 散场结算（§7.4/§8.3）：三条信号都是新加的，替身 worker / 未落地的版本可能没有，
+        # 故一律防御式连接（缺它们时本窗口的既有行为一字不变）。
+        sig_settlement_pending = getattr(self._worker, "sig_settlement_pending", None)
+        if sig_settlement_pending is not None:
+            sig_settlement_pending.connect(self._on_settlement_pending)
+        sig_settlement_hint = getattr(self._worker, "sig_settlement_hint", None)
+        if sig_settlement_hint is not None:
+            sig_settlement_hint.connect(self._on_settlement_hint)
+        sig_settlement_applied = getattr(self._worker, "sig_settlement_applied", None)
+        if sig_settlement_applied is not None:
+            sig_settlement_applied.connect(self._on_settlement_applied)
 
     # ------------------------------------------------------------ 公共入口
     def start_session(self) -> None:
@@ -2806,6 +3050,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event) -> None:  # noqa: N802
         # 收尾等待放宽（评审 #5）：close 时等在引擎 loop 上撤 autoplay + aclose + join，
         # 确保线程先于窗口/worker 析构结束，杜绝 destroy-while-running。
+        # 吐字定时器先停：它连着窗口自己的槽，绝不许活到窗口之后（关窗即再无对白区可画）。
+        self._clear_stream_state()
         if self._worker is not None and self._worker.isRunning():
             self._worker.shutdown(8000)
         super().closeEvent(event)
@@ -2820,6 +3066,8 @@ class MainWindow(QMainWindow):
         self._log_view.clear()
         self._log_entries = []          # 日志留存同步清空（换场不串内容）
         self._conv_msgs = []            # 本地留存同步清空（换场不串内容）
+        self._clear_stream_state()      # 吐字状态一并清（气泡/缓冲/定时器绝不带到新场）
+        self._stream_landed = set()     # 落地集同清（新场的轮次从头起算）
         self._retracted_ids = set()     # 作废集同清：新场的 id 从零重排，旧作废 id 无意义
         self._name_colors = assign_name_colors(
             [ch.get("name") for ch in chars], self._speaker_palette())
@@ -2880,7 +3128,11 @@ class MainWindow(QMainWindow):
         self._narration = {}            # 换场：旧的叙述状态先清，等新场的 sig_narration
         self._scene_diag = {}           # 换场：旧场的诊断状态一并清（新场重新起算）
         self._diag_seen = {}
+        self._set_scene_diag_text("")   # 顶部诊断区同上：上一场的诊断不跟着新场走
         self._implicit_seen = None
+        self._pending_settlement = {}   # 换场：上一场的待决清单不作数（副本是逐场一份的）
+        self._settlement_warnings = []
+        self._refresh_settle_action()
         auto = info.get("auto_narrate")
         if auto is not None:
             self._auto_scene_check.blockSignals(True)
@@ -2909,34 +3161,377 @@ class MainWindow(QMainWindow):
         self._sync_cast_menu_state()
 
     def _on_message(self, msg: dict) -> None:
-        """一条新消息：先存进本地留存（撤销/改写/重绘的真源），再整屏重绘。
+        """一条新消息：入本地留存（撤销/改写/重绘的真源），再整屏重绘。
 
         整屏 setHtml 而非逐条 append：Qt 的 append 会**继承上一段的段落对齐**——叙述行
         是居中的，之后 append 的角色行会跟着居中（气泡行的右对齐同理）。每次从留存重建
         才能保证每段的 align 各归各位（消息总量对单机演示级转录无性能压力）。
+
+        流式（§2.4 收尾）：这条若是**当前正在吐字的那位**说的，就**先扣住**——屏上此刻挂着
+        "吐到一半的气泡"，两处一起画就是同一句话出现两遍。扣住的那条在吐完那一刻由
+        `_stream_finish` 无缝换成正式行：文本同源（后端契约：分片拼起来逐字节等于整段）、
+        HTML 同形（同一个 `_format_message`），观感就是"这句话打完了"。
+        **扣住 = 不按正式行渲染，不是不入留存**（`_hold_message` 把它插在气泡该在的位置上）：
+        留存是 `_last_msg_id`/撤销改写/换场清空共同的真源，行序必须**到达即定**——若等到吐完
+        才 append，扣住窗口里上屏的任何一行（用户插话/场景叙述/导演行）都会排到它前面，对白区
+        次序与引擎 id 次序永久相反（详见 `_hold_message`）。
+        吐字**根本没在跑**（流式关着、或这条不属于当前吐字的那位）→ 走今天的老路：立即入
+        留存（这正是"不开启时逐字节不变"的那一条）。
+
+        顺手记下这条的 (speaker, turn) 为"已落地"：同一块的余片若**后**到（次序不保证，
+        worker 侧虽然已经掰成"片先于消息"，这里仍要兜住），不许再攒进缓冲；收尾标记一看
+        它已落地就直接撤（见 `_on_speak_delta` / `_on_speak_end`）。
         """
+        speaker = str(msg.get("speaker") or "")
+        turn = msg.get("turn")
+        if isinstance(turn, int) and not isinstance(turn, bool):
+            self._stream_landed.add((speaker, turn))
+        st = self._stream
+        if st is not None and st.get("speaker") == speaker:
+            held = self._held_msg
+            if held is None or self._same_block(held, msg):
+                self._hold_message(msg)      # 吐字中 → 先扣住，吐完那一刻换成它
+                return
+            # 手上还扣着一块、又来了一块**不同的**（块挨得比吐字还近，正常不会）：
+            # 先把前一块收尾换出去，这一条落到下面走老路——绝不让后到的那条把扣住的顶掉。
+            self._stream_finish()
         self._conv_msgs.append(dict(msg))
         self._rerender_conversation()
 
+    def _hold_message(self, msg: dict) -> None:
+        """扣住一条正式消息（吐字进行中）：**当刻就入留存**，但不按正式行渲染（§2.4）。
+
+        位置：插在**气泡此刻所在的地方**——即开吐那一刻记下的 `anchor`（= 当时的留存长度）。
+        正常路径下 anchor == 留存长度（气泡一直挂在末尾），故等价于 append；一旦扣住窗口里
+        已经有别的行上屏（叙述/插话），它也必须落在那些行**之前**：引擎里这句话本就先发生
+        （对白区行序 == 引擎 id 序），而 append 会把它排到末尾，于是屏上出现"后发生的在上面、
+        时间戳倒流"，且**永久**留着（换场才清）——`_drop_from` 的位置截断也会据此把引擎仍
+        保留的那一句一起吃掉（引擎按 id ≥ 目标撤回，屏上按位置截断）。
+
+        顺手把它的虚拟钟时刻戳补进气泡（已知就用它）：换上正式行的那一帧与之前那帧逐字节
+        相同，不会多出一个"时间戳突然冒出来"的小跳（时刻戳未知时连重绘都不必：气泡本来就在
+        那个位置、那份形态）。吐字早已走完（正式消息只是姗姗来迟）→ 立刻就地定稿，不等下一跳。
+        """
+        st = self._stream
+        if st is None:
+            return
+        entry = dict(msg)
+        held = self._held_msg
+        if held is not None and self._held_entry_present():
+            for i, m in enumerate(self._conv_msgs):     # 同一块的重复到达：就地换内容
+                if m is held:
+                    self._conv_msgs[i] = entry
+                    break
+        else:
+            anchor = st.get("anchor")
+            idx = len(self._conv_msgs) if not isinstance(anchor, int) \
+                else max(0, min(anchor, len(self._conv_msgs)))
+            self._conv_msgs.insert(idx, entry)
+        self._held_msg = entry
+        hhmmss = str(msg.get("time_hhmmss") or "")
+        if str(st.get("time_hhmmss") or "") != hhmmss:
+            st["time_hhmmss"] = hhmmss
+            if not self._stream_exhausted():
+                self._rerender_conversation()
+        if self._stream_exhausted():
+            self._stream_finish()
+
+    def _held_entry_present(self) -> bool:
+        """被扣住的那条还在留存里吗（**身份**比对：同一份 dict 对象，不是按 id 猜）。"""
+        held = self._held_msg
+        return held is not None and any(m is held for m in self._conv_msgs)
+
+    def _on_speak_delta(self, payload: dict) -> None:
+        """sig_speak_delta：一个流式片 → **只攒不画**（§2.4 接收侧）。
+
+        片只往 `_stream_raw` 里追加，**一次界面都不碰**（不重绘）：SSE 的片是突发到达的，
+        跟着它重绘就是一顿一顿的；显示节奏归吐字定时器（`_on_speak_end` 起表）。
+
+        换人/换块（说话人或轮次变了）就重开一个缓冲：正常不该发生（同一块的片恒同源），
+        只可能是上一块的收尾标记丢了——先把上一块就地收尾（该换正式行就换出去），再从零
+        攒新的。宁可早收尾，也绝不把两个人的话拼进同一句。
+
+        **已落地那块的余片一律丢**：正式消息先到、余片后到（次序不保证）时，这里若照常
+        攒，收尾标记一到就会拿它开出一条吐字气泡，屏上于是多出一条擦不掉的残句（正文与
+        刚落地的那条一模一样），还会把下一块同一说话人的片继续拼进去（两句话粘成一句）。
+        判据是 (speaker, turn) 与该块是否已落地——同块的片与消息同源，故恒等；换块时 turn
+        递增，绝不误伤新块。
+        """
+        data = dict(payload) if isinstance(payload, dict) else {}
+        speaker = str(data.get("speaker") or "")
+        text = str(data.get("text") or "")
+        if not speaker or not text:
+            return
+        turn = data.get("turn")
+        if isinstance(turn, int) and not isinstance(turn, bool) \
+                and (speaker, turn) in self._stream_landed:
+            return                           # 这一块已经有正式行了：余片绝不重画成幽灵
+        raw = self._stream_raw
+        if raw is not None and not self._same_block(raw, data):
+            self._finish_pending_stream()    # 上一块没收尾（标记丢了）→ 先就地收尾，换新的
+            raw = None
+        if raw is None:
+            self._stream_raw = {"speaker": speaker, "turn": turn, "text": text}
+        else:
+            raw["text"] += text
+
+    def _on_speak_end(self, payload: dict) -> None:
+        """sig_speak_end：这一块说完了（§二）——按 `settled` 决定收场。
+
+        · `settled=True`（这一段的输出**已经全量收完**、正式消息在路上）→ **开吐**：
+          起定时器按固定节奏把缓冲里的字推进到屏上（§2.4）。正式消息的先扣后换见
+          `_on_message`。
+        · `settled=False`（近重复被判复读、整块作废）→ **不吐、直接撤**，绝不留半条。
+        · 无论哪种，只要这一块**已经落地**（(speaker, turn) 命中 `_stream_landed`）就什么都
+          不吐/不撤别人：那条正式行早在屏上了，再吐一遍就是正文两次。次序不保证（worker
+          侧已掰成"片先于消息"，这里是兜底——见 `_on_speak_delta` 的说明）。
+        """
+        data = dict(payload) if isinstance(payload, dict) else {}
+        speaker = str(data.get("speaker") or "")
+        turn = data.get("turn")
+        key = (speaker, turn) if isinstance(turn, int) and not isinstance(turn, bool) else None
+        if not bool(data.get("settled")) or (key is not None
+                                             and key in self._stream_landed):
+            self._cancel_block(speaker, turn)
+            return
+        # 收尾标记里的时刻（worker 在派发时盖的）：记进缓冲，开吐第一帧就有时间。
+        # 正式消息到达后 `_hold_message` 会采纳它自己的时刻（同一个值），故换行不跳。
+        if self._stream_raw is not None:
+            hhmmss = str(data.get("time_hhmmss") or "")
+            if hhmmss and not self._stream_raw.get("time_hhmmss"):
+                self._stream_raw["time_hhmmss"] = hhmmss
+        self._start_stream_drip()
+
+    def _start_stream_drip(self) -> None:
+        """`settled=True` 的收尾标记到达（= 这一段已全量收完）→ **开吐**（§2.4 显示侧）。
+
+        节奏：每 `STREAM_TICK_MS` 一跳、每跳推进 `_stream_step()` 个字（短句 1 个字/跳，
+        长句按 `STREAM_MAX_MS` 反推加速），每跳重绘一次——**与网络分片彻底解耦**，读得再
+        抖，屏上都是匀速的。空台词（模型只吐了空白/只有收尾标记）不开吐：没有可显示的东西，
+        正式消息到达时按老路直接入留存。
+        """
+        raw = self._stream_raw
+        self._stream_raw = None
+        if not raw or not str(raw.get("text") or ""):
+            return
+        if self._stream is not None:
+            self._stream_finish()            # 上一块还没收尾（块挨得极近）→ 先换出去再开新的
+        self._stream = {"speaker": str(raw.get("speaker") or ""),
+                        "turn": raw.get("turn"),
+                        "full": str(raw.get("text") or ""),
+                        "text": "",
+                        # 时刻从**第一帧**就有（§2.4）：worker 在收尾标记里带上了虚拟钟
+                        # 时刻，窗口在 `_on_speak_end` 时把它记进缓冲——否则开吐那一帧
+                        # （比正式消息早几十毫秒）会显示成一行没有时间的台词，用户看到
+                        # 的就是"说着说着时间才冒出来"。正式消息到达后由 `_hold_message`
+                        # 采纳它自己的时刻（同一个值），故换行时不会跳。
+                        "time_hhmmss": str(raw.get("time_hhmmss") or ""),
+                        # 气泡此刻的位置 = 留存末尾：开吐之后到的行都排在它后面（正式消息
+                        # 到达时就插在这里，见 `_hold_message`）。
+                        "anchor": len(self._conv_msgs)}
+        self._start_stream_timer()
+        self._stream_tick()                  # 立刻吐第一跳（屏上别先空一拍）
+
+    def _stream_tick(self) -> None:
+        """吐字一跳：把「已显示」计数往前推一步并重绘（§2.4）。
+
+        推到最后一次就**就地收尾**（`_stream_finish`）：最后一跳不画"吐字形态"的半成品帧，
+        直接换成正式行——两者 HTML 逐字节相同，观感就是"这句话打完了"。
+
+        发现没有气泡（被撤/换场/关窗）就顺手停表退出：定时器绝不空转到下一块。
+        """
+        st = self._stream
+        if st is None:
+            self._stop_stream_timer()
+            return
+        full = str(st.get("full") or "")
+        shown = len(str(st.get("text") or ""))
+        if shown >= len(full):
+            self._stream_finish()
+            return
+        st["text"] = full[: shown + self._stream_step(len(full))]
+        if len(st["text"]) >= len(full):
+            self._stream_finish()            # 这一跳就是最后一跳：直接定格，不画半成品
+            return
+        self._rerender_conversation()
+
+    @staticmethod
+    def _stream_step(total: int) -> int:
+        """每跳推进几个字：短句 1 个/跳；长句按 `STREAM_MAX_TICKS` 反推（**加速上限**）。
+
+        向上取整保证"整句吐完 ≤ `STREAM_MAX_MS`"是**恒真**的（不是差不太多）：62 字以内的
+        台词 1 字/跳；3000 字的台词每跳 49 字、62 跳 × 40ms ≈ 2.5 秒——而 1 字/跳要两分钟。
+        """
+        return max(1, -(-total // STREAM_MAX_TICKS))
+
+    def _stream_finish(self) -> None:
+        """吐字收尾：停表，把临时气泡**无缝换成正式行**（扣住的那条），没有就停在气泡形态。
+
+        两件事都必须在这里做完，否则就是幽灵：
+        ① 扣住的那条**改回正式行渲染**——它早在 `_hold_message` 就进了留存（位置也定死了），
+           这里只是丢掉气泡状态：同一句、同一个位置、同一套 HTML，屏上正文仍只出现一次；
+        ② 扣住的那条**已被撤**（撤回/改写把它从留存里摘了）→ 什么都不补，绝不留残句。
+        正式消息还没到（次序罕见：它比收尾标记晚，但通常只晚几毫秒）→ 把整句画全、停在
+        气泡形态，等 `_on_message` 到达时定稿（`_hold_message` 认出已吐完会立刻收尾）。
+        """
+        self._stop_stream_timer()
+        st = self._stream
+        held_present = self._held_entry_present()        # 扣住的那条还在留存里吗
+        held_gone = self._held_msg is not None and not held_present
+        self._held_msg = None
+        if held_present:
+            self._stream = None              # 它在留存里：改回正式行渲染（位置不变）
+            self._rerender_conversation()
+            return
+        if st is None:
+            return
+        if held_gone:
+            self._stream = None              # 那条已被摘掉（撤回/改写/截断）：气泡一并撤
+            self._rerender_conversation()
+            return
+        st["text"] = str(st.get("full") or "")   # 正式消息还没到 → 停在整句都吐出来的气泡形态
+        self._rerender_conversation()
+
+    def _stream_exhausted(self) -> bool:
+        """吐字是不是已经走完（整句都显示出来了）；没有气泡时恒真。"""
+        st = self._stream
+        if st is None:
+            return True
+        return len(str(st.get("text") or "")) >= len(str(st.get("full") or ""))
+
+    def _finish_pending_stream(self) -> None:
+        """把上一块的吐字就地收尾并清掉它的缓冲（新块要开张了，见 `_on_speak_delta`）。"""
+        if self._stream is not None:
+            self._stream_finish()
+        self._stream_raw = None
+
+    def _cancel_block(self, speaker: str, turn) -> None:
+        """撤掉**这一块**的吐字状态（缓冲 + 气泡）：`settled=False` 的作废、已落地块的收尾。
+
+        **只撤这一块**：块挨得近时另一块的吐字可能还在跑（同一说话人的下一块尤其容易混），
+        连带撤掉就是"话说到一半突然没了"。判据是 (speaker, turn)；轮次不是整数（老载荷/
+        手工投信号）→ 只认说话人，保持与今天一致的兜底口径。
+        """
+        raw = self._stream_raw
+        if raw is not None and str(raw.get("speaker") or "") == speaker \
+                and (turn is None or raw.get("turn") == turn):
+            self._stream_raw = None
+        st = self._stream
+        if st is not None and str(st.get("speaker") or "") == speaker \
+                and (turn is None or st.get("turn") == turn):
+            self._cancel_stream()
+
+    def _start_stream_timer(self) -> None:
+        """起吐字表（§2.4）：固定节奏推 `_stream_tick`。惰性建、跨块复用。"""
+        timer = self._stream_timer
+        if timer is None:
+            timer = QTimer(self)
+            timer.setInterval(STREAM_TICK_MS)
+            timer.timeout.connect(self._stream_tick)
+            self._stream_timer = timer
+        if not timer.isActive():
+            timer.start()
+
+    def _stop_stream_timer(self) -> None:
+        """停吐字表（幂等）。**不销毁**——下次开吐复用同一枚（免得每块新建一个 QTimer）。"""
+        timer = self._stream_timer
+        if timer is not None and timer.isActive():
+            timer.stop()
+
+    def _clear_stream_state(self) -> bool:
+        """停表 + 清缓冲/气泡/扣住的消息，**不重绘**；返回是否真有东西被清掉（幂等）。
+
+        换场/关窗这类"整屏自己会清"的场合用它（`_cancel_stream` 是对外加一次重绘的版本）。
+        """
+        had = (self._stream is not None or self._stream_raw is not None
+               or self._held_msg is not None)
+        self._stop_stream_timer()
+        self._stream = None
+        self._stream_raw = None
+        self._held_msg = None
+        return had
+
+    def _cancel_stream(self) -> bool:
+        """撤掉吐字的一切痕迹（停表 + 清缓冲/气泡/扣住的消息）并重绘；返回是否真撤了。
+
+        换场/关窗/收束/撤回/换块都走这里——**定时器绝不能活过它所属的那一块**：场景已经
+        换了还去动界面，轻则残句重影，重则在新场的对白区里吐上一场的字。
+        """
+        if self._clear_stream_state():
+            self._rerender_conversation()
+            return True
+        return False
+
+    def _is_retracted(self, m: dict) -> bool:
+        """这条消息是不是已被作废（§6.1 回溯式撤回）：按 id 认，无 id 恒为否。"""
+        mid = m.get("id")
+        return isinstance(mid, int) and mid in self._retracted_ids
+
+    @staticmethod
+    def _same_block(a: dict, b: dict) -> bool:
+        """两条（片/消息）是不是**同一块**：同说话人 + 同轮次；轮次缺失时只认说话人。"""
+        if str(a.get("speaker") or "") != str(b.get("speaker") or ""):
+            return False
+        ta, tb = a.get("turn"), b.get("turn")
+        if isinstance(ta, int) and not isinstance(ta, bool) \
+                and isinstance(tb, int) and not isinstance(tb, bool):
+            return ta == tb
+        return True
+
     def _last_msg_id(self) -> int | None:
-        """本地留存里**最后一条带 id 的**消息 id（没有则 None；人类气泡不算）。"""
+        """本地留存里**最后一条带 id 的**消息 id（没有则 None；人类气泡不算）。
+
+        扣住的那条（吐字中）也在留存里（`_hold_message` 到位即入留存），故这里不必特判：
+        它在留存中的位置就是屏上的位置，谁最后上屏谁就是"最后一条"——用户这时插话，气泡的
+        `after_id` 正指向它（否则回溯到它时，写在它下面那句会漏网，见 `_reconcile_retracted`）。
+        """
         for m in reversed(self._conv_msgs):
             if isinstance(m.get("id"), int):
                 return int(m["id"])
         return None
 
     def _rerender_conversation(self) -> None:
-        """按本地留存整屏重绘对白区，并滚到底（撤销/改写后立即生效）。"""
-        self._view.setHtml("".join(self._format_message(m) for m in self._conv_msgs))
+        """按本地留存整屏重绘对白区，并滚到底（撤销/改写后立即生效）。
+
+        **吐字中的那一条**（§2.5，若有）画在**它自己的位置上**——即扣住的那条在留存里的
+        下标（`_held_msg` 身份比对）：它不是另一行，而是那行此刻的形态；摆错位置就是"后发生
+        的排在它上面"（时间戳倒流）。正式消息还没到（罕见）时按开吐那一刻的锚摆位，故换上
+        正式行的那一帧与之前那帧位置也相同。吐字期间这个方法就是**每跳一次**的重绘入口（§2.4）。
+
+        没有吐字时：渲染输入**逐字节**等于"留存里每条各自的正式 HTML 顺序拼起来"（流式关掉
+        = 今天的老路，见 tests/test_gui_stream.py 的对拍）。
+        """
+        st = self._stream
+        bubble = self._format_streaming()
+        held = self._held_msg if st is not None else None
+        if st is not None and bubble and held is not None:
+            html_text = "".join(bubble if m is held else self._format_message(m)
+                                for m in self._conv_msgs)
+        elif st is not None and bubble:
+            anchor = st.get("anchor")
+            idx = len(self._conv_msgs) if not isinstance(anchor, int) \
+                else max(0, min(anchor, len(self._conv_msgs)))
+            html_text = ("".join(self._format_message(m) for m in self._conv_msgs[:idx])
+                         + bubble
+                         + "".join(self._format_message(m) for m in self._conv_msgs[idx:]))
+        else:
+            html_text = "".join(self._format_message(m) for m in self._conv_msgs)
+        self._view.setHtml(html_text)
         bar = self._view.verticalScrollBar()
         bar.setValue(bar.maximum())
 
     def _drop_message(self, mid: int) -> bool:
-        """从本地留存摘掉某条消息并重绘；返回是否真的摘掉了（幂等，重复调用无害）。"""
+        """从本地留存摘掉某条消息并重绘；返回是否真的摘掉了（幂等，重复调用无害）。
+
+        摘掉的若是**被扣住的那条**（吐字中）→ 连气泡与表一并撤（`_held_entry_present` 按
+        身份认，不看 id）：否则气泡仍指着一条已经不在留存里的行，吐完那一刻还照常定格。
+        """
         keep = [m for m in self._conv_msgs if m.get("id") != mid]
         if len(keep) == len(self._conv_msgs):
             return False
         self._conv_msgs = keep
+        if self._held_msg is not None and not self._held_entry_present():
+            self._clear_stream_state()
         self._rerender_conversation()
         return True
 
@@ -2947,15 +3542,36 @@ class MainWindow(QMainWindow):
         不等 worker 往返）：此刻"该条之后"与引擎将要丢弃的那一段**恰好是同一批**（对白区
         只装当前一场的内容，换场即清空），故位置截断既准又快，连没有 id 的人类气泡也一并
         清掉。找不到该 id（已被摘掉/只在日志里）→ 什么都不动，返回 False。
+        **前提是留存次序 == 引擎 id 次序**——这条由"扣住的消息也当刻入留存"保证（见
+        `_hold_message`）：否则位置截断会把引擎仍保留的那句台词一起吃掉。
         **不要在收到 sig_retracted 时用它**：改写是「截断 + 重新落一行」，新行在上屏顺序上
         排在旧 id 之后，位置截断会把刚落地的新叙述误杀（见 _on_retracted）。
         """
         idx = next((i for i, m in enumerate(self._conv_msgs) if m.get("id") == mid), None)
         if idx is None:
             return False
+        gone = self._conv_msgs[idx:]
         del self._conv_msgs[idx:]
+        self._forget_landed(gone)          # 被截掉的块重跑时要能重新开吐（键随行一同作废）
+        # 吐字中的那条若也被截掉了（它在该 id 之后）→ 一并撤掉：截断之后屏上还挂着它，就是
+        # 一段已经不属于本场的残句，而且定时器还在动界面。被截断的是**别人**（吐字那条排在
+        # 截断点之前）→ 它照常吐完换出去，绝不因为一次无关的撤销吞掉引擎仍保留的台词。
+        if self._stream is not None and not self._drip_survives_truncation(idx):
+            self._clear_stream_state()
         self._rerender_conversation()
         return True
+
+    def _drip_survives_truncation(self, idx: int) -> bool:
+        """截断点 `idx`（`del _conv_msgs[idx:]` 的起点）之后，吐字中的那条还该活着吗。
+
+        活着的判据是"它排在截断点之前"——即引擎里它先发生、本来就不该被这次回溯带走：
+        · 已经扣住的那条：看它在留存里是否还活着（身份比对）；
+        · 还没扣住（正式消息没到）：看气泡的锚（开吐那一刻的位置）是否 <= `idx`。
+        """
+        if self._held_msg is not None:
+            return self._held_entry_present()
+        anchor = self._stream.get("anchor") if self._stream else None
+        return isinstance(anchor, int) and anchor <= idx
 
     def _reconcile_retracted(self, ids) -> bool:
         """按**权威作废集**整屏对齐（worker 叙述状态载荷里的 `retracted` 全量）。
@@ -2965,26 +3581,36 @@ class MainWindow(QMainWindow):
         的，一并摘掉；否则保留（改写之后用户再插的话，其 after_id 是改写后的新行，不会
         被误伤）。这正是「worker 只报单条 id」时的兜底：以引擎的作废集为准刷新，而不是
         只认那一个 id（也顺带覆盖别处发起、界面没参与的那类撤回）。
+
+        流式侧同理要兜住：**被扣住的那条**（吐字中）若被这一批摘掉（按 id，或按 `after_id`
+        连带），气泡必须一并撤掉——否则它会在吐完那一刻照常定格，把一个已被回溯的句子留在
+        屏上。判据是"它还在不在留存里"（身份比对），故两条路都兜得住。
         """
         fresh = {int(i) for i in (ids or []) if isinstance(i, int)}
         if not fresh:
             return False
         self._retracted_ids |= fresh
-        keep = [m for m in self._conv_msgs
-                if m.get("id") not in self._retracted_ids
-                and m.get("after_id") not in self._retracted_ids]
-        if len(keep) == len(self._conv_msgs):
-            return False
-        self._conv_msgs = keep
-        self._rerender_conversation()
-        return True
+        gone = [m for m in self._conv_msgs
+                if m.get("id") in self._retracted_ids
+                or m.get("after_id") in self._retracted_ids]
+        changed = bool(gone)
+        if changed:
+            drop = {id(m) for m in gone}
+            self._conv_msgs = [m for m in self._conv_msgs if id(m) not in drop]
+            self._forget_landed(gone)      # 被撤的块重跑时要能重新开吐（键随行一同作废）
+        if self._held_msg is not None and not self._held_entry_present():
+            changed = self._clear_stream_state() or changed
+        if changed:
+            self._rerender_conversation()
+        return changed
 
     def _on_scene_diag(self, diag: dict) -> None:
         """sig_scene_diag：场景自身状态（活字段 + 诊断 + 隐式事件）到达（G9）。
 
         三件事：
         ① 场景卡按**活字段**刷新——hook/场景工具改过场景名/日期之后，卡片不再停在开场值；
-        ② 新出现的 hook/tool/save 诊断写进日志区并在状态区提示一次（此前完全不可见）；
+        ② 新出现的 hook/tool/save 诊断写进日志区，并在顶部**诊断区**摆最新一条（§三：
+            诊断区只在日志面板开着时显示，且**不再**抢占状态药丸）；
         ③ 新出现的隐式事件（visible=False 的钩子事件，不进对白）也写进日志区一行。
         去重：同一条诊断/同一条隐式事件只提示一次（该信号每块都可能到）。
         """
@@ -3002,7 +3628,11 @@ class MainWindow(QMainWindow):
             last = dict(events[-1] or {})
             sig = (last.get("hook_id"), last.get("turn"),
                    str(last.get("content") or ""))
-            if sig != self._implicit_seen:
+            # 离场待结算那一条不走这里：它有自己的一条通道（sig_settlement_hint，见
+            # `_on_settlement_hint`），那条会落一行写明"谁、哪一场、几条"。两条都写就是
+            # 同一个事实在日志区出现两遍，而这行还更含糊（"隐式事件：…"）。
+            if sig != self._implicit_seen and \
+                    last.get("event_kind") != "pending_settlement":
                 self._implicit_seen = sig
                 self._log_append({"kind": "text", "role": "muted",
                                   "text": str(last.get("content") or ""),
@@ -3046,11 +3676,165 @@ class MainWindow(QMainWindow):
                               "new": change.get("new")})
 
     def _note_scene_diag(self, text: str) -> None:
-        """一条新诊断：日志区留档 + 状态区提示一次（可见，不必翻日志窗格）。"""
+        """一条新诊断：日志区留档 + 顶部诊断区摆最新一条（§三）。
+
+        改口径（§三）：诊断**不再抢占顶部的状态药丸**——那个位置归"进行中/已暂停/开场
+        失败"这类运行状态（一条诊断把状态顶掉，用户就看不出这场是在跑还是停了）。诊断有
+        自己的去处：日志窗格（留档，开面板可看全文）+ 顶部**诊断区**（一行摘要，只在日志
+        面板开着时显示）。
+        """
         self._log_append({"kind": "text", "role": "warn", "text": text,
                           "key": "log.scene_diag"})
-        self._set_status_chip(self._t.t("status.scene_diag", text=text),
-                              style=("#fef3c7", "#92400e"))
+        self._set_scene_diag_text(text)
+
+    def _set_scene_diag_text(self, text: str) -> None:
+        """改顶部诊断区的文本并按「日志」开关决定它露不露头（§三）。"""
+        self._scene_diag_text = str(text or "")
+        label = getattr(self, "_scene_diag_label", None)
+        if label is not None:
+            # 顶部这一行用 `status.scene_diag`（它是"顶部区域的运行状态行"那一族），
+            # 日志窗格里的留档行用 `log.scene_diag`——两处各自成键，翻译可分别打磨。
+            label.setText(self._t.t("status.scene_diag", text=self._scene_diag_text))
+        self._sync_scene_diag_area()
+
+    def _sync_scene_diag_area(self) -> None:
+        """诊断区的显隐 = 日志面板开着 **且** 有诊断可显示；关着一律不占位（§三）。"""
+        area = getattr(self, "_scene_diag_area", None)
+        if area is None:
+            return
+        log_open = bool(getattr(self, "_log_btn", None) is not None
+                        and self._log_btn.isChecked())
+        area.setVisible(log_open and bool(self._scene_diag_text))
+
+    # ------------------------------------------------ 散场结算（§7.2/§7.3/§8.3）
+    def _on_settlement_pending(self, payload: dict) -> None:
+        """sig_settlement_pending：引擎已把待决清单备好 → **主线程**开窗问用户（§7.4/§8.3）。
+
+        清单与警告一律**照抄引擎给的那一份**（本方法一条都不自己算）；没有待决内容就
+        什么都不做（引擎侧已不发这种信号，这里再兜一道——绝不打扰）。
+
+        **清单空但有警告**是另一回事（§7.4 "绝不静默"）：有人账记着、这次却收不上来
+        （副本里那条条目文件坏了），`settlement_rows()` 是空的，而那句警告就是用户唯一的
+        知情渠道。那时落日志 + 状态区说一句，**绝不开窗**——没有可看的东西，一张空清单
+        只会让人以为有得选。
+        """
+        data = dict(payload) if isinstance(payload, dict) else {}
+        rows = [dict(r) for r in (data.get("characters") or []) if isinstance(r, dict)]
+        warnings = [str(w) for w in (data.get("warnings") or [])]
+        self._settlement_warnings = warnings
+        if not rows:
+            for warning in warnings:
+                self._log_append({"kind": "text", "role": "warn", "text": warning,
+                                  "key": "log.settlement_pending"})
+            if warnings:
+                self._set_status_chip(self._t.t(
+                    "status.settlement_warning", text=warnings[0]))
+            return
+        for row in rows:
+            self._pending_settlement[str(row.get("name") or "")] = row
+        self._refresh_settle_action()
+        self._open_settlement_dialog(rows)
+
+    def _on_settlement_hint(self, row: dict) -> None:
+        """sig_settlement_hint：某角色离场、这一场有所得待结算 → 一条**不打断**的提示（§7.3）。
+
+        绝不弹窗——用户正在看戏，模态框会把它拦腰截断。提示落在日志区一行（持久、可回溯）
+        与状态区一行（当下可见），并让「角色 → 结算待决…」菜单项可用：他随时能手动结。
+
+        §7.3 要的提示有两个要素：**谁、哪一场**。名字光秃秃的时候，用户连开几场或改过
+        场景名之后就认不出这笔账属于哪一场了——`scene` 就在事件行里（`events.settlement_row`
+        产的），带上它；标题栏与结算窗里显示的是同一对（`名字 · 场景`），两处口径一致。
+        """
+        data = dict(row) if isinstance(row, dict) else {}
+        name = str(data.get("name") or "").strip()
+        if not name:
+            return
+        self._pending_settlement[name] = data
+        self._refresh_settle_action()
+        scene = str(data.get("scene") or "").strip()
+        text = self._t.t("label.pending_settlement", name=name,
+                         place=f"（{scene}）" if scene else "",
+                         added=_to_int(data.get("added")),
+                         revised=_to_int(data.get("revised")))
+        self._log_append({"kind": "text", "role": "warn", "text": text,
+                          "key": "log.settlement_pending"})
+        self._set_status_chip(text)
+
+    def _on_settlement_applied(self, payload: dict) -> None:
+        """sig_settlement_applied：用户决定已经执行完 → 收掉提示/菜单项，结果说一句。
+
+        **只收引擎确认结清的那些**（载荷里的 `settled`，由 `worker._settlement_outcome`
+        按 `SettleReport` 判）：没并进去的（条目被挡下/写盘失败/一个字都没落盘）引擎仍
+        留着待结算、并在报告里叫用户"处理好之后再结一次"，界面把「结算待决…」跟着关掉
+        就等于让这一场的所得永远卡在副本里、只剩 CLI 救得回来。所以待决名单只减 `settled`，
+        文案也只说引擎真做成了什么——用户点了「保留」不等于东西已经进了本体库。
+
+        引擎的报告警告（单个角色结算失败之类）也在这里落到日志区——结算**绝不静默**。
+        """
+        data = dict(payload) if isinstance(payload, dict) else {}
+        decisions = dict(data.get("decisions") or {})
+        settled = [str(name) for name in (data.get("settled") or [])]
+        unsettled = [str(name) for name in (data.get("unsettled") or [])]
+        for name in settled:
+            self._pending_settlement.pop(name, None)
+        self._refresh_settle_action()
+        for warning in (data.get("warnings") or []):
+            self._log_append({"kind": "text", "role": "warn", "text": str(warning),
+                              "key": "log.settlement_pending"})
+        if not settled and not unsettled:
+            return
+        kept = sum(1 for name in settled
+                   if str(decisions.get(name)) in ("keep", "保留"))
+        if unsettled:
+            self._set_status_chip(self._t.t(
+                "status.settlement_incomplete", names="、".join(unsettled),
+                n=len(settled), kept=kept, discarded=len(settled) - kept))
+            return
+        self._set_status_chip(self._t.t(
+            "status.settlement_applied", n=len(settled), kept=kept,
+            discarded=len(settled) - kept))
+
+    def _on_settle_pending(self) -> None:
+        """「角色 → 结算待决…」：把当前待决的角色开成同一张结算窗（§7.3 的手动结算）。
+
+        与散场时那张窗**同一处实现**（同一个类、同一份回传路径）——"随时单独结"和
+        "散场一起结"在引擎侧本就同一条路（`apply_settlement`），界面不该长出第二种。
+        """
+        rows = [dict(row) for row in self._pending_settlement.values()]
+        if not rows:
+            return
+        self._open_settlement_dialog(rows)
+
+    def _open_settlement_dialog(self, rows: list[dict]) -> None:
+        """开结算弹窗（主线程；`open()` 是窗口模态但**不阻塞调用方**，worker 信号照常投递）。
+
+        弹窗只问与收决定；把决定送回引擎是 `_on_settlement_decided` → `worker.apply_settlement`
+        的事（`run_coroutine_threadsafe` 落到引擎 loop）——引擎自己绝不弹窗（§7.4）。
+        """
+        dialog = SettlementDialog(rows, warnings=self._settlement_warnings, parent=self)
+        dialog.decided.connect(self._on_settlement_decided)
+        self._settlement_dialog = dialog
+        dialog.open()
+
+    def _on_settlement_decided(self, decisions: dict) -> None:
+        """用户按下「确定」：把决定回传给 worker（GUI 线程绝不直接碰引擎）。"""
+        decisions = dict(decisions) if isinstance(decisions, dict) else {}
+        if not decisions:
+            return
+        apply_settlement = getattr(self._worker, "apply_settlement", None)
+        if apply_settlement is None:        # 替身 worker / 未落地的版本：什么也不做
+            return
+        apply_settlement(decisions)
+
+    def _refresh_settle_action(self) -> None:
+        """「结算待决…」的可用性跟着待决名单走（没有待决 → 禁用并说明原因）。"""
+        action = getattr(self, "_action_settle_pending", None)
+        if action is None:
+            return
+        has_pending = bool(self._pending_settlement)
+        action.setEnabled(has_pending)
+        action.setToolTip(self._t.t("tip.settle_pending" if has_pending
+                                    else "tip.settle_pending_none"))
 
     def _log_append(self, item: dict) -> None:
         """往日志窗格（人类只读区）追一条：留存结构化条目 + 上屏（与 think 日志同处一地）。"""
@@ -3115,7 +3899,11 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_log(self, on: bool) -> None:
         """「日志」开关：开 → 中央列分栏，上半日志窗格与下半对白同时可见；
-        关 → 收起日志窗格只显对白。对白内容不受影响（只是分栏可见性）。"""
+        关 → 收起日志窗格只显对白。对白内容不受影响（只是分栏可见性）。
+
+        **场景诊断区跟随本开关显隐**（§三）：开着时它在顶部占一行（最近一条诊断），
+        关着时整块收起、**不保留高度**——否则中栏顶部永远空一条，还把对白区顶住。
+        """
         if on:
             self._log_view.show()
             half = max(140, self.height() // 2)   # 上半日志 / 下半对白，均分
@@ -3124,6 +3912,7 @@ class MainWindow(QMainWindow):
         else:
             self._log_view.hide()
             self._log_btn.setText(self._t.t("btn.log"))
+        self._sync_scene_diag_area()
 
     @staticmethod
     def _num(st: dict, key: str) -> float:
@@ -3208,8 +3997,32 @@ class MainWindow(QMainWindow):
         再逐 id 报作废——新行的 id 比被丢的那批更大、且已经排在屏上，位置截断会把刚落地
         的新叙述一并误杀（实测：改写后新行确实被吃掉）。
         """
-        self._retracted_ids.add(int(mid))
-        self._drop_message(int(mid))
+        mid = int(mid)
+        gone = next((m for m in self._conv_msgs if m.get("id") == mid), None)
+        self._retracted_ids.add(mid)
+        self._drop_message(mid)
+        held = self._held_msg
+        if held is not None and self._is_retracted(held):
+            # 被撤的正是扣住的那条（吐字中）：气泡一并撤，绝不留残句；定时器同时停掉。
+            self._cancel_stream()
+        # 被摘掉的那一行不再算"已落地"：撤回是**截断式**的，重跑那一块时轮次会从被截断处
+        # 重新起算，若还拿着作废那条的 (speaker, turn)，重跑的余片会被 `_on_speak_delta`
+        # 当成旧块余片拦下（那就白白丢了"逐字出现"）。只丢**它自己**那一个键：更早的块仍然
+        # 已落地，它们的余片再晚到也不许开幽灵气泡。
+        self._forget_landed([gone])
+
+    def _forget_landed(self, gone) -> None:
+        """把被作废/被截掉的这些行从**已落地集**里去键（重跑那一块时要能重新开吐）。
+
+        键是 (speaker, turn)——与片同源（见 `_stream_landed`）；没有整数轮次的行（人类气泡、
+        老载荷）不参与，保持既有行为。
+        """
+        for m in gone:
+            if not isinstance(m, dict):
+                continue
+            turn = m.get("turn")
+            if isinstance(turn, int) and not isinstance(turn, bool):
+                self._stream_landed.discard((str(m.get("speaker") or ""), turn))
 
     def _render_narration_status(self) -> None:
         """左栏「场景推进」状态行：自动开关态 + 距上次推进的块数 + 上次触发理由。
@@ -3344,6 +4157,15 @@ class MainWindow(QMainWindow):
     def _on_finished(self) -> None:
         self._finished = True
         self._auto_paused = False             # 收束/停止后不再是「守卫暂停」态
+        # 收束时兜底收掉吐字状态（气泡 + 扣住的消息 + 定时器）：正常情况下它早被 block_spoken
+        # 定稿或被收尾标记撤掉了（worker 在发 sig_finished 之前先 sweep 过全部消息），这一句是
+        # 防"半条话"留在屏上的最后一道——收束之后世界不再推进，没有下一条消息会来把它顶掉，
+        # 而定时器更不该在收束之后还在动界面。
+        # 但**扣住的那条**是权威的整段正文（不是半条话，只是碰巧还在吐，且早就按位置进了留存）：
+        # 先把它定格成正式行——收束不该把一条已经落地的台词吞掉——再把气泡/表收干净。
+        if self._held_msg is not None:
+            self._stream_finish()
+        self._cancel_stream()
         self._enable_input(False)
         self._pause_btn.setEnabled(False)
         self._stop_btn.setEnabled(False)
@@ -3500,6 +4322,47 @@ class MainWindow(QMainWindow):
             return Path(self._cfg.scene).parent
         return _APP_DIR / "scenes"
 
+    def _libraries_root(self) -> Path:
+        """信息库根（§13.3）：注入优先，否则用引擎侧那套缺省（两处必须同一个）。"""
+        if self._libraries_root_override is not None:
+            return self._libraries_root_override
+        return default_libraries_root()
+
+    def _on_open_knowledge_editor(self) -> None:
+        """「信息库…」：选一座库（没有就新建一座）→ 开信息库编辑器（§8.1）。
+
+        选库与建库都在选择器里（第一次用时一座库都没有，不给个建库入口用户就卡在死角
+        里）；取消就什么都不开。编辑器是模态的但**不阻塞 worker**（exec() 只跑嵌套事件
+        循环），且它只碰磁盘上的库文件，不碰引擎。
+        """
+        root = self._libraries_root()
+        picker = LibraryPickerDialog(root, self)
+        if picker.exec() != QDialog.DialogCode.Accepted or picker.chosen is None:
+            return
+        dlg = KnowledgeEditorDialog(picker.chosen, libraries_root=root, parent=self)
+        dlg.exec()
+
+    def _on_open_relations_editor(self) -> None:
+        """「关系…」：先选一座**角色库**（= 一个角色）→ 开人际关系编辑器（§6.1）。
+
+        与「信息库…」同一套接线（选库 → 开两栏编辑器 → 取消就什么都不开），只有选择器
+        换成只列角色库的那一个：关系表只住在角色的信息库里（§6.2），列一座广域库出来
+        让用户编它的关系，那个文件没有任何人会读。
+
+        对话框是模态的但**不阻塞 worker**（exec() 只跑嵌套事件循环），且它只碰磁盘上的
+        关系表，不碰引擎——所以它不会打断正在跑的戏。**但它改的是角色本体的关系表，不是
+        正在跑的那场戏读的那一份**：戏里的关系表是开场时拷进本场副本的（§5.1/§6.2，
+        `knowledgetools._read_dir` 副本优先），故这一改动要到**下次开场**才进提示词。
+        这一点由编辑器自己写在界面上（`hint.relations_scope`），别在这里许一个做不到的
+        "下一块就生效"。
+        """
+        root = self._libraries_root()
+        picker = RelationsPickerDialog(root, self)
+        if picker.exec() != QDialog.DialogCode.Accepted or picker.chosen is None:
+            return
+        dlg = RelationsEditorDialog(picker.chosen, libraries_root=root, parent=self)
+        dlg.exec()
+
     def _on_open_library(self) -> None:
         """「管理场景库…」/ 空状态页「打开场景」：场景库弹窗里选中一个场景 → 立即切场。
 
@@ -3520,7 +4383,9 @@ class MainWindow(QMainWindow):
         """造一个库弹窗：兼容「(角色目录, 场景目录, parent)」与「(场景目录, parent)」两种签名。
 
         另一个 agent 正在把 LibraryDialog 改成**只列场景**的「场景库」；按签名参数个数选
-        调用式，故两种实现在并行期都能跑（签名数不出来时按新口径试）。
+        调用式，故两种实现在并行期都能跑（签名数不出来时按新口径试）。**信息库根照样要
+        传下去**（它有「从模板导入…」，信息库模板的落点由它定），但只有认这个参数的版本
+        才传——旧签名硬塞关键字会当场 TypeError。
         """
         try:
             params = list(inspect.signature(LibraryDialog.__init__).parameters.values())
@@ -3529,9 +4394,12 @@ class MainWindow(QMainWindow):
         positional = [p for p in params
                       if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
                       and p.name != "self"]
+        kwargs = ({"libraries_root": self._libraries_root()}
+                  if any(p.name == "libraries_root" for p in params) else {})
         if len(positional) >= 3:
-            return LibraryDialog(self._characters_dir(), self._scenes_dir(), self)
-        return LibraryDialog(self._scenes_dir(), self)
+            return LibraryDialog(self._characters_dir(), self._scenes_dir(), self,
+                                 **kwargs)
+        return LibraryDialog(self._scenes_dir(), self, **kwargs)
 
     def _validate_scene_materials(self, scene: Path, characters: list[Path]) -> str:
         """切场前的素材校验（空串 = 可开场）：按**场景自己的名单**把关（§3.1/§3.3）。
@@ -3577,6 +4445,8 @@ class MainWindow(QMainWindow):
         self._log_view.clear()
         self._log_entries = []
         self._conv_msgs = []
+        self._clear_stream_state()      # 吐字状态立刻清：不等新场的 sig_scene_info 到达
+        self._stream_landed = set()      # （上一场的残句/定时器绝不活到新场）
         self._retracted_ids = set()
         self._narration = {}
         self._finished = False
@@ -3673,6 +4543,23 @@ class MainWindow(QMainWindow):
                 f'line-height:1.55;">'
                 f'{stamp}<span style="color:{color};font-weight:700;">{name}</span>'
                 f'<span style="color:{pal.text};">　{content}</span></p>')
+
+    def _format_streaming(self) -> str:
+        """**吐字中的那一条**（§2.5）：与正式角色气泡**逐字节同一套 HTML**（没有人在说 → 空串）。
+
+        "同形"不是把样式再调一遍，而是**结构保证**的：这里构造一份伪消息（说话人 + 已显示的
+        前缀 + 已知的时刻戳）喂给 `_format_message`——将来改正式气泡的样式，吐字气泡自动跟着
+        变，绝不会两处漂开。文本同源（分片拼起来逐字节等于权威正文）、时间戳同源（正式消息
+        给的那个，还没到就不带），故换上正式行的那一帧与之前那帧逐字节相同：观感就是"这句话
+        打完了"，而不是"换了个气泡"。
+        """
+        st = self._stream
+        if not st:
+            return ""
+        return self._format_message({
+            "speaker": st.get("speaker"), "speaker_type": "character",
+            "content": st.get("text") or "",
+            "time_hhmmss": st.get("time_hhmmss") or ""})
 
     def _narration_links(self, m: dict) -> str:
         """叙述行尾「撤销 · 改写」两个行内链接（href = scene:undo/edit:<id>）。

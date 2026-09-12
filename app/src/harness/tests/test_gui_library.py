@@ -146,8 +146,7 @@ def test_character_editor_saves_and_reloads_all_fields(qapp, tmp_path):
     dlg.samples_edit.setPlainText("（样例）你倒是先说说看。\n（样例）（笑）随你。")
     dlg.personality_edit.setPlainText("描述：冷静\n习惯：晚睡")
     dlg.abilities_edit.setPlainText("记忆力好")
-    dlg.relationships_edit.setPlainText("己：暗恋的转学生")
-    dlg.boundary_edit.setPlainText("只知道自己经历和被告知的事")
+    dlg.relationships_edit.setPlainText("戊：暗恋的转学生")
     dlg.weight_sliders["w1_relevance"].setValue(70)
     dlg.decay_slider.setValue(30)
 
@@ -165,11 +164,70 @@ def test_character_editor_saves_and_reloads_all_fields(qapp, tmp_path):
     assert card.corpus.samples == ["（样例）你倒是先说说看。", "（样例）（笑）随你。"]
     assert card.personality == {"描述": "冷静", "习惯": "晚睡"}
     assert card.abilities == ["记忆力好"]
-    assert card.relationships == {"己": "暗恋的转学生"}
-    assert card.knowledge_boundary == ["只知道自己经历和被告知的事"]
+    assert card.relationships == {"戊": "暗恋的转学生"}
     assert card.weights.w1_relevance == pytest.approx(0.7)
     assert card.weights.w2_arousal == pytest.approx(0.5), "未动的权重保持默认"
     assert card.emotion_decay_rate == pytest.approx(0.3)
+
+
+def test_character_editor_has_no_knowledge_boundary_area(qapp, tmp_path):
+    """§8.2/§9.1：「已知边界」编辑区已**撤除**——控件不在，保存也不再写回那个退役字段。
+
+    撤除必须是两头都撤：控件留着（只是没人填）会让用户以为这一栏还有用；控件撤了而保存
+    时还读某个残留属性，会当场 AttributeError（"撤了一半"最典型的症状）。故这里两头都钉：
+    没有 `boundary_edit` 部件，新存的卡里也没有那个老键（`knowledge_seed` 为空）。
+
+    老卡上的那几行不会因此丢：读卡时迁进 `knowledge_seed`（见 test_schemas 那一组），
+    库首次创建时由 `knowledgestore.seed_from_card` 播种。
+    """
+    cdir = tmp_path / "characters"
+    dlg = CharacterEditorDialog(None, cdir)
+    assert not hasattr(dlg, "boundary_edit"), "§8.2：那个编辑区已撤除"
+
+    dlg.name_edit.setText("阿离")
+    dlg.save()
+
+    assert dlg.result() == QDialog.DialogCode.Accepted
+    raw = json.loads((cdir / "阿离.json").read_text(encoding="utf-8"))
+    assert "knowledge_boundary" not in raw, "保存不得再写退役字段"
+    assert raw["knowledge_seed"] == []
+    assert load_character_card(cdir / "阿离.json").knowledge_seed == []
+
+
+def test_character_editor_saving_an_old_card_keeps_every_boundary_line(qapp, tmp_path):
+    """**最高约束**：老卡在编辑器里保存一次，卡上那几条边界一条都不能丢（§9.1）。
+
+    保存是最高频的动作，而编辑器写的是 `card.model_dump()`（整份覆盖）：`build_card()` 若
+    只按部件重建一张新卡，那几行（读卡时迁进 `knowledge_seed` 的）就会被写成空列表——
+    用户只是打开改个错字，卡上亲手写的"他知道什么"就没了，且此后再无机会进信息库
+    （迁移只在内存搬，卡文件是唯一落盘副本）。所以保存必须把**读进来时的那份种子原样带回**。
+
+    这里只改一个与边界无关的字段（personality），证明"不是恰好什么都没动才保住"。
+    """
+    cdir = tmp_path / "characters"
+    cdir.mkdir(parents=True, exist_ok=True)
+    path = cdir / "甲.json"
+    path.write_text(json.dumps({
+        "name": "甲", "personality": {"描述": "话少"},
+        "knowledge_boundary": ["知道：药铺的暗格", "陈掌柜是个跛子",
+                               "不知道：信是谁写的"],
+    }, ensure_ascii=False), encoding="utf-8")
+
+    card = load_character_card(path)
+    assert card.knowledge_seed == ["知道：药铺的暗格", "陈掌柜是个跛子",
+                                   "不知道：信是谁写的"], "前提：读卡时迁移就位"
+
+    dlg = CharacterEditorDialog(card, cdir)
+    dlg.personality_edit.setPlainText("描述：话更少")
+    dlg.save()
+
+    assert dlg.result() == QDialog.DialogCode.Accepted
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    assert "knowledge_boundary" not in raw, "保存时老键退役，改成新键落盘"
+    assert raw["knowledge_seed"] == ["知道：药铺的暗格", "陈掌柜是个跛子",
+                                     "不知道：信是谁写的"], \
+        "老卡上的边界行必须逐条活着写回卡文件（顺序不变）"
+    assert load_character_card(path).knowledge_seed == raw["knowledge_seed"]
 
 
 def test_character_editor_rejects_empty_name(qapp, tmp_path):
@@ -248,13 +306,13 @@ def test_library_copy_rejects_unsafe_scene_copy_name(qapp, tmp_path, monkeypatch
 def test_character_editor_prefills_existing_card(qapp, tmp_path):
     """编辑既有卡：各部件按卡内容预填，保存后名字/权重不变。"""
     cdir = tmp_path / "characters"
-    _write_chars(cdir, "戊")
-    card = load_character_card(cdir / "戊.json")
+    _write_chars(cdir, "庚")
+    card = load_character_card(cdir / "庚.json")
     dlg = CharacterEditorDialog(card, cdir)
-    assert dlg.name_edit.text() == "戊"
+    assert dlg.name_edit.text() == "庚"
     assert "示例" in dlg.personality_edit.toPlainText()
     dlg.save()
-    assert load_character_card(cdir / "戊.json").name == "戊"
+    assert load_character_card(cdir / "庚.json").name == "庚"
 
 
 # ----------------------------------------------------------- SceneEditorDialog
@@ -600,6 +658,56 @@ def test_hook_editor_dialog_builds_and_validates(qapp):
     assert scene_hook.build_hook().scene_patch == {"description": "桌椅都撤了"}, \
         "键值对回读"
     assert scene_hook.build_hook().id == "h9"
+
+
+def test_hook_editor_has_a_reason_box_that_roundtrips(qapp):
+    """进离场原因输入框（《人际关系与场景推进》§5.1）：留空 = 今天的行为，填了就随钩子走。
+
+    三件事：部件叫 `reason_edit`（程序化填充/断言用）、保存时写进 `hook.reason`
+    （首尾空白去掉）、读回时预填；留空**一个字都不写**（空串，不是 None、不是空白）。
+    """
+    dlg = lib.HookEditorDialog(None, cast=["甲"])
+    dlg.condition_edit.setPlainText("甲要走")
+    dlg.kind_combo.setCurrentIndex(_idx(dlg.kind_combo, "character"))
+    dlg.character_combo.setCurrentText("甲")
+    dlg.action_combo.setCurrentIndex(_idx(dlg.action_combo, "remove"))
+
+    assert dlg.reason_edit.text() == "", "缺省留空 = 与今天逐字节相同"
+    assert dlg.build_hook().reason == ""
+    assert dlg.reason_edit.placeholderText().strip(), "占位符要教用户这里填什么"
+    assert not _EMOJI_RE.search(dlg.reason_edit.placeholderText())
+
+    dlg.reason_edit.setText("  去见师父  ")
+    assert dlg.build_hook().reason == "去见师父", "首尾空白不留进场景文件"
+
+    # 读回：带原因的一条重建对话框 → 预填（编辑既有钩子时不丢原因）
+    again = lib.HookEditorDialog(dlg.build_hook(), cast=["甲"])
+    assert again.reason_edit.text() == "去见师父"
+    assert again.build_hook().reason == "去见师父"
+
+
+def test_hook_editor_reason_label_is_translated_not_a_key(qapp):
+    """原因那一行是中文文案（i18n 主目录里真有这个键），不是回落出来的键名。"""
+    dlg = lib.HookEditorDialog(None, cast=[])
+    labels = [lb.text() for lb in dlg.findChildren(lib.QLabel)]
+    assert any("原因" in text for text in labels), labels
+    assert not any(text.startswith("field.") or text.startswith("label.")
+                   for text in labels), "不得把 i18n 键名当文案显示"
+
+
+def test_scene_editor_roundtrips_a_hook_reason(qapp, tmp_path, monkeypatch):
+    """原因经场景编辑器 → 场景文件 → 读回，全程不丢（作者写一次，引擎才拿得到它）。"""
+    cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
+    _write_chars(cdir, "甲")
+    dlg = SceneEditorDialog(None, sdir, cdir)
+    dlg.name_edit.setText("钩子场")
+    dlg.add_hook(Hook(id="", condition="甲要走", event_kind="character",
+                      character_name="甲", action="remove", reason="去见师父"))
+    dlg.save()
+
+    assert dlg.result() == QDialog.DialogCode.Accepted
+    scene = load_scene(dlg.saved_path)
+    assert scene.hooks[0].reason == "去见师父"
 
 
 def test_scene_patch_field_keys_match_engine_whitelist():
@@ -1029,7 +1137,7 @@ class _FakeWorker(QObject):
 
     def schedule_cast_change(self, character_name, action, fire_after_rounds,
                              notify=None, notify_text="", visible=True,
-                             turns: int = 0) -> None:
+                             turns: int = 0, reason: str = "") -> None:
         self.calls.append({"schedule_cast_change": character_name})
 
     def restart(self, *a, **k) -> None:

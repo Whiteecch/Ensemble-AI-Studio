@@ -2,7 +2,7 @@
 
 本目录收录这套多角色会话引擎（多智能体角色扮演 harness）的设计与实现文档。代码在 `app/`：引擎 `app/src/harness/`、桌面界面 `app/src/harness/gui/`、示例素材 `app/characters/` 与 `app/scenes/`；配置在 `app/config/`（`models.yaml` 档位映射、`bid.yaml` 竞价参数）。
 
-**阅读顺序**：`design.md` → `technical-scheme.md` → `ui-and-scene-freedom.md` → `implementation-plan.md`；要给最终用户做安装包，另读 `packaging.md`。前三篇描述当前口径，第四篇是开发过程记录，可最后读或按需查阅。
+**阅读顺序**：`design.md` → `technical-scheme.md` → `ui-and-scene-freedom.md` → `information-library.md` → `relations-and-scene-pacing.md`；要给最终用户做安装包，另读 `packaging.md`；`implementation-plan.md` 是开发过程记录，可最后读或按需查阅。前五篇描述当前口径。
 
 **命名约定**：文档与代码注释中的「设计文档」指 `docs/design.md`，「技术方案」指 `docs/technical-scheme.md`。
 
@@ -41,3 +41,15 @@
 - **是什么**：打包与分发方案（**尚未实施**）。前置改造（冻结态资源路径 `paths.py`、用户数据目录 `%APPDATA%\Ensemble-AI-Studio`、首次运行播种）、PyInstaller 两种产物、Inno Setup 一键安装包、一条命令构建、发版流程与风险对策，末尾附可打勾的实施清单。
 - **对应代码**：拟新增 `app/src/harness/paths.py`、`packaging/`（`ensemble.spec`、`entry_gui.py`、`installer.iss`、`build.ps1`）。
 - **谁读**：想给最终用户一个「下载即装」的安装包，或要给项目接 CI 自动出包的人。
+
+## 6. `information-library.md` — Information Library: a character's knowledge, as a graph
+
+- **是什么**：角色**跨场景持久**的知识库。条目（键 / 标题 / 一行摘要 / 正文）正文之间以双链互链成**图**；**索引表**恒在提示词里当入口，正文由角色在 think 阶段**用工具调用**按需取用、可顺链多跳。含：场景副本、散场结算（保留 / 丢弃）、冲突自动新压旧且旧条归档、**订阅**（活引用，可单条固化）、`knowledge_boundary` 退役迁移、Markdown 模板导入、信息库编辑器。
+- **对应代码**：`knowledge.py`、`knowledgestore.py`、`knowledgetools.py`、`knowledgesettle.py`、`backends/`（工具调用）、`graph.py`（think 工具循环）、`gui/knowledge_editor.py`、`gui/settlement_dialog.py`。
+- **谁读**：要理解"角色知道什么"这一子系统、或要改工具循环 / 结算语义的人。**§13 接线地图**是实现者必读。
+
+## 7. `relations-and-scene-pacing.md` — Relationships & Scene Pacing
+
+- **是什么**：第五批需求。**流式开口**（接收侧全量缓冲、显示侧匀速吐字）、**场景诊断收进日志**、**场景跳时间**（四道闸：前件 / 幅度 / 冷却 / 频次，前件闸是引擎侧确定性判据）、**进离场讲原因**（原因只发当事人，倾向并入既有 bid）、**人际关系系统**（一人一行的关系表，恒在上下文；`update_relation` 三重频率约束；亲密度进 dynamics；与信息库键链接）。
+- **对应代码**：`relations.py`、`dynamics.py`、`scenarist.py`、`engine.py`、`gui/relations_editor.py`、`gui/main_window.py`（吐字）。
+- **谁读**：要改界面呈现节奏、场景推进、或人物关系的人。**§2.4 的节奏设计**（为什么是"全量收完再匀速吐"而不是跟着网络分片走）值得先读。

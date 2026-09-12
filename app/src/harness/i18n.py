@@ -31,7 +31,7 @@ DEFAULT_LANGUAGE = "zh-Hans"
 #: zh-Hans 主目录：**完整**，是键集合的规范来源（其余目录是它的子集/占位）。
 _ZH_HANS: dict[str, str] = {
     # 外壳 / 状态
-    "app.title": "Ensemble-AI-Studio · 群像",
+    "app.title": "多智能体角色扮演",
     "status.ready": "就绪",
     "status.running": "进行中",
     "status.paused": "已暂停",
@@ -68,11 +68,21 @@ _ZH_HANS: dict[str, str] = {
     "menu.manage_characters": "管理角色…",
     "menu.advanced_cast": "高级移入/移出…",
     "menu.reset_scene": "重置场景运行上下文…",
+    "menu.knowledge": "信息库…",
+    "menu.relations": "关系…",
+    # 流式开口（《人际关系与场景推进》§二．8）：台词逐字出现；缺省不勾（见
+    # settings.DEFAULT_STREAM_SPEAK 的理由）。
+    "menu.stream_speak": "流式开口（台词逐字出现）",
     "menu.no_scenes": "（场景库为空）",
     "menu.bad_scene": "（坏文件）{name}",
     "menu.no_addable_characters": "（角色库里没有可添加的角色）",
     "menu.no_active_characters": "（本场还没有在场角色）",
     # 菜单 tooltip
+    "tip.knowledge": "打开信息库编辑器：新建库、加条目、改正文、看链接与过时标记",
+    "tip.relations": "打开人际关系编辑器：编某个角色的关系表（亲密度、关系描述、相处模式、指向的条目）",
+    # 流式开口的提示：把代价说清楚（"正在说"的那一半有时会被判定作废而消失）
+    "tip.stream_speak": "角色的台词逐字出现（边走边说，节奏由模型决定）；"
+                        "关闭时整段一次显示。偶发的近重复会让说到一半的那句被撤掉。",
     "tip.manage_scenes": "打开场景库：打开/编辑/复制/删除/新建/导入（只列场景）",
     "tip.configure_scene": "编辑当前场景的全部信息（名称/日期/背景/描述/剧情/边界/出场角色），保存后当场生效",
     "tip.save_scene_menu": "把当前场景（配置 + 对话历史 + 虚拟钟 + 各角色进场时间）落盘，下次打开可续演",
@@ -330,6 +340,9 @@ _ZH_HANS: dict[str, str] = {
     "dlg.import_warn": "\n提示：{warnings}",
     "kind.character": "角色卡",
     "kind.scene": "场景卡",
+    "kind.library": "信息库",
+    "kind.wide": "广域库",
+    "kind.character_lib": "角色库",
     # 表单字段（角色卡）
     "field.name": "姓名（必填，同时是文件名）",
     "field.origin": "出处／作品",
@@ -344,11 +357,13 @@ _ZH_HANS: dict[str, str] = {
     "field.boundaries": "已知边界（一行一条：只知道哪些事）",
     "field.weights": "性格权重（urge 系数，0~1）",
     "field.decay": "情绪衰减",
-    "field.condition": "触发条件（场景每轮判定，如「丙说出近似『我知道真相』的话」）",
+    "field.condition": "触发条件（场景每轮判定，如「甲说出近似『我知道真相』的话」）",
     "field.event_kind": "事件类型",
     "field.hook_character": "角色",
     "field.hook_action": "动作",
     "field.mute_turns": "静默轮数（仅「静默 N 轮」用）",
+    "field.hook_reason": "进离场原因（只交给当事人自己，别人看不到；留空 = 不写）",
+    "field.cast_reason": "原因（只交给当事人自己，别人看不到；留空 = 不写）",
     "field.context_text": "写入上下文的文本（所有人可见的一条叙述）",
     "field.scene_patch": "要修改的场景字段（一行「键：值」，键取 {fields}，如 description：桌椅都撤了）",
     "field.note": "备注（仅列表里给你自己看）",
@@ -402,7 +417,7 @@ _ZH_HANS: dict[str, str] = {
     "label.unfilled": "（未填写）",
     "label.yes": "是",
     "label.no": "否",
-    "label.please_name": "如：甲",
+    "label.please_name": "如：乙",
     "label.please_source": "如：某作品；留空表示原创",
     "label.please_style": "短句/语速/语气…",
     "label.please_thinking": "先看什么、再决定什么…",
@@ -410,15 +425,16 @@ _ZH_HANS: dict[str, str] = {
     "label.please_samples": "一句一行的台词样例",
     "label.please_personality": "描述：冷静沉稳",
     "label.please_one_per_line": "一行一条",
-    "label.please_relationship": "乙：暗恋的转学生",
-    "label.please_scene_name": "如：贝克街221B",
-    "label.please_filename": "如：贝克街221B.json",
+    "label.please_relationship": "丙：暗恋的转学生",
+    "label.please_scene_name": "如：餐厅",
+    "label.please_filename": "如：餐厅.json",
     "label.please_boundary_desc": "餐厅打烊",
     "label.please_background": "如：近未来的沿海城市",
     "label.please_description": "如：餐厅里有一些桌椅",
     "label.please_plot": "如：两人从试探到摊牌",
     "label.please_condition": "一行自然语言条件",
     "label.please_note": "如：主线摊牌用",
+    "label.please_reason": "如：去见师父",
     "label.please_context": "如：窗外忽然下起雨来。",
     "label.please_patch": "description：桌椅都撤了",
     "label.please_url": "https://api.deepseek.com",
@@ -453,12 +469,130 @@ _ZH_HANS: dict[str, str] = {
     "col.muted": "禁言状态",
     # 说话人
     "speaker.you": "你",
+    # 信息库编辑器（§8.1）与订阅区（§8.2）
+    "dlg.knowledge_title": "信息库 · {name}",
+    "dlg.knowledge_pick_title": "选择信息库",
+    "hint.knowledge_pick": "选一座库打开；也可以在这里先新建一座。",
+    "grp.entries": "条目",
+    "grp.entry_detail": "条目详情",
+    "grp.borrowed": "借自《{name}》",
+    "grp.subscriptions": "订阅信息库",
+    "hint.subscriptions": "勾选要订阅的库；借入的条目可以单独固化（固化后源库再改，这一份不动）。",
+    "field.entry_title": "标题",
+    "field.entry_summary": "摘要",
+    "field.entry_body": "正文",
+    "field.outgoing": "指向",
+    "field.incoming": "被引用",
+    "field.entry_status": "状态",
+    "field.new_entry_key": "新建条目的键",
+    "label.please_entry_key": "如：药铺的暗格",
+    "label.please_library_name": "如：庆国世界观",
+    "label.no_entries": "（这座库还没有条目）",
+    "label.no_libraries": "（还没有信息库）",
+    "label.select_entry": "（在左边选一条条目）",
+    "label.outdated_superseded": "（被 {by} 取代）",
+    "label.outdated_plain": "（过时）",
+    "label.dangling_link": "{link}（库里没有这一条）",
+    "label.subs_none": "（信息库根下还没有库）",
+    "label.subs_no_borrowed": "（还没有借入的条目）",
+    "label.subs_need_name": "先填好姓名：订阅按角色挂在他的信息库上。",
+    "value.status_active": "现行",
+    "value.status_outdated": "过时（被 {by} 取代）",
+    "value.status_outdated_plain": "过时",
+    "btn.new_entry": "新建条目",
+    "btn.new_library": "新建库",
+    "btn.pin": "固化",
+    "btn.delete_entry": "删除条目",
+    "btn.open": "打开",
+    "title.delete_entry": "删除条目",
+    "dlg.confirm_delete_entry": "删除条目《{title}》？此动作不可撤销。",
+    # 人际关系编辑器（《人际关系与场景推进》§6.1/§6.2）：一个角色一张关系表，
+    # 左栏一行一个关系、右栏那一行的详情。亲密度是硬的 −100 ~ 100。
+    "dlg.relations_title": "人际关系 · {name}",
+    "dlg.relations_pick_title": "选择角色（关系表住在角色的信息库里）",
+    "hint.relations_pick": "选一座角色库来编它的关系；还没有库就先在这里新建一座。",
+    "grp.relation_rows": "关系",
+    "grp.relation_detail": "关系详情",
+    "field.relation_name": "姓名",
+    "field.relation_gender": "性别",
+    "field.relation_closeness": "亲密度（−100 ~ 100）",
+    "field.relation_description": "关系描述",
+    "field.relation_mode": "相处模式",
+    "field.relation_entry_key": "指向的条目",
+    "label.please_relation_name": "如：丙",
+    "label.relation_entry_key": "条目：",
+    "label.no_relations": "（这张表还没有任何关系行）",
+    "label.select_relation": "（在左边选一行）",
+    "btn.new_relation": "新建关系",
+    "btn.delete_relation": "删除关系",
+    "title.delete_relation": "删除关系",
+    "dlg.confirm_delete_relation": "删掉「{name}」这一行？它指向的信息库条目不删。",
+    # 改动落在哪里、什么时候进戏（§6.2 的副本口径）：这个界面编的是角色**本体**的关系表，
+    # 而正在跑的这场戏读的是开场时建的副本——不说清这一点，用户会以为编辑器坏了。
+    "hint.relations_scope": "改动写进这个角色的本体关系表；正在跑的这场戏读的是开场时那份"
+                            "副本，所以要到下次开场才进提示词。",
+    "err.relation_name_required": "要给这个人一个姓名（它同时是关系表里那一行的键）。",
+    "err.relation_exists": "关系表里已经有「{name}」这一行了——一个人只能有一行。",
+    # 表读不干净时拒绝一切写盘（读成空表再写回会把手写的其余几行整份抹掉）。
+    "err.relation_table_unreadable": "这张关系表现在读不出来，先把它修好再改"
+                                     "——不然会把读不到的那几行覆盖掉。",
+    "err.relation_gone": "这一行已经不在了，表已刷新。",
+    "err.relation_save_failed": "保存失败：{exc}",
+    "err.select_relation": "先在左边选一行。",
+    "value.entry_key_found": "这条在信息库里。",
+    "value.entry_key_missing": "信息库里还没有这一条（角色顺着这一行读下去会读不到）。",
+    "title.discard_edits": "放弃未保存的修改",
+    "dlg.confirm_discard_edits": "《{title}》的改动还没保存，继续就会丢掉这些改动。确定吗？",
+    "err.entry_key_required": "先填条目的键。",
+    "err.entry_exists": "库里已经有「{entry}」这条了。",
+    "err.entry_file_taken": "磁盘上已经有条目文件 {name}，但它读不出来（原因见上），"
+                            "没有被列进左栏；这里不覆盖它：请先修好那个文件，或换一个键。",
+    "err.pin_target_taken": "本库已经有同键的条目《{entry}》，固化会把它覆盖掉，故未执行："
+                            "请先改掉或删掉你自己那条，再固化。",
+    "err.pin_file_taken": "磁盘上已经有同名的条目文件 {name}，但它读不出来（原因见上）："
+                          "固化会把它覆盖掉，故未执行。请先修好那个文件再固化。",
+    "err.select_entry": "先在左边选一条条目。",
+    "err.borrowed_readonly": "这是借来的条目（来自订阅）：先固化，再按自己的理解改。",
+    "err.entry_gone": "这条已经不在库里了（可能被别处删掉），已重新读盘。",
+    "err.save_failed": "保存失败：{exc}",
+    "err.library_name_required": "先填库名。",
+    "err.library_name_unsafe": "库名「{name}」不能当目录名：{reason}",
+    "err.library_exists": "这座库已经有了：{path}",
+    "err.library_outside_root": "这座库不在信息库根下，无法订阅：{path}",
+    "err.subscriptions_failed": "订阅没能保存：{exc}",
+    "err.pin_failed": "固化失败：{exc}",
+    "status.pinned": "已固化《{title}》。",
+    "tip.borrowed_entry": "来自《{name}》：{path}",
+    # 散场结算弹窗与离场挂起（§7.2/§7.3/§8.3）
+    "dlg.settlement_title": "散场结算",
+    "hint.settlement": "这些是本场的所得。保留会并入角色的信息库；丢弃则什么都不并"
+                       "（副本与存档照旧留着，事后翻得到）。",
+    "label.settlement_warn_head": "以下情况需要你知道：",
+    "settle.counts": "新增 {added} 条、修订 {revised} 条",
+    "settle.no_titles": "（没有可列的条目）",
+    "btn.keep": "保留",
+    "btn.discard": "丢弃",
+    "btn.keep_all": "全部保留",
+    "btn.discard_all": "全部丢弃",
+    "menu.settle_pending": "结算待决…",
+    "tip.settle_pending": "对已有本场所得待结算的角色单独结算（散场时也会一起结）",
+    "tip.settle_pending_none": "现在没有待结算的角色；有人离场或散场时会出现在这里",
+    "log.settlement_pending": "结算待决：{text}",
+    "label.pending_settlement": "{name}{place}有一笔本场所得待结算（新增 {added} 条、"
+                                "修订 {revised} 条）——散场时或随时可单独结。",
+    #: {place} 是场景名（形如「（茶室）」）；场景名读不出来时为空串，不会留下一个空括号。
+    "status.settlement_applied": "已结算 {n} 人：保留 {kept} 人、丢弃 {discarded} 人。",
+    "status.settlement_incomplete": "{names} 没能结清：这一场仍是待结算（原因见日志），"
+                                    "处理好之后可以从「角色 → 结算待决…」再结一次。"
+                                    "这次结清 {n} 人（保留 {kept}、丢弃 {discarded}）。",
+    "status.settlement_warning": "散场结算：{text}",
+    "status.settlement_failed": "结算没能完成：{exc}",
 }
 
 #: 其余语言：菜单 / 设置子菜单 / 最常用按钮与状态已落地（§7「其余 6 种语言先落地
 #: 菜单与关键界面」）；未覆盖的键一律回落 zh-Hans 主目录。
 _ZH_HANT: dict[str, str] = {
-    "app.title": "Ensemble-AI-Studio · 群像",
+    "app.title": "多智能體角色扮演",
     "status.ready": "就緒",
     "status.running": "進行中",
     "status.paused": "已暫停",
@@ -480,6 +614,9 @@ _ZH_HANT: dict[str, str] = {
     "menu.manage_scenes": "管理場景庫…",
     "menu.new_scene": "新建場景",
     "menu.import_scene": "匯入場景…",
+    "menu.knowledge": "資訊庫…",
+    "menu.relations": "關係…",
+    "menu.settle_pending": "結算待決…",
     "menu.reset_scene": "重置場景運行上下文…",
     "menu.add_character": "新增角色",
     "menu.remove_character": "移出角色",
@@ -529,7 +666,7 @@ _ZH_HANT: dict[str, str] = {
 }
 
 _EN: dict[str, str] = {
-    "app.title": "Ensemble-AI-Studio",
+    "app.title": "Multi-Agent Roleplay",
     "status.ready": "Ready",
     "status.running": "Running",
     "status.paused": "Paused",
@@ -551,6 +688,10 @@ _EN: dict[str, str] = {
     "menu.manage_scenes": "Manage scene library…",
     "menu.new_scene": "New scene",
     "menu.import_scene": "Import scene…",
+    "menu.knowledge": "Knowledge base…",
+    "menu.relations": "Relationships…",
+    "menu.stream_speak": "Streaming speech (word by word)",
+    "menu.settle_pending": "Settle pending…",
     "menu.reset_scene": "Reset scene runtime…",
     "menu.add_character": "Add character",
     "menu.remove_character": "Remove character",
@@ -609,6 +750,9 @@ _EN: dict[str, str] = {
                        "auto-advance off)",
     "tip.save_scene": "Save this scene (config + transcript + clock + cast "
                       "entry times) so you can resume it next time",
+    "tip.stream_speak": "Reveal each line word by word (paced by the model). "
+                        "Off shows the whole line at once. A rare near-repeat "
+                        "may retract a line mid-sentence.",
     "tip.log": "Toggle the log pane: inspect each character's private think "
                "(human-only)",
     "log.scene_diag": "Scene diagnostic: {text}",
@@ -619,7 +763,7 @@ _EN: dict[str, str] = {
 }
 
 _FR: dict[str, str] = {
-    "app.title": "Ensemble-AI-Studio",
+    "app.title": "Jeu de rôle multi-agents",
     "status.ready": "Prêt",
     "status.running": "En cours",
     "status.paused": "En pause",
@@ -641,6 +785,9 @@ _FR: dict[str, str] = {
     "menu.manage_scenes": "Gérer la bibliothèque de scènes…",
     "menu.new_scene": "Nouvelle scène",
     "menu.import_scene": "Importer une scène…",
+    "menu.knowledge": "Base de connaissances…",
+    "menu.relations": "Relations…",
+    "menu.settle_pending": "Régler en attente…",
     "menu.reset_scene": "Réinitialiser le contexte d'exécution…",
     "menu.add_character": "Ajouter un personnage",
     "menu.remove_character": "Retirer un personnage",
@@ -689,7 +836,7 @@ _FR: dict[str, str] = {
 }
 
 _DE: dict[str, str] = {
-    "app.title": "Ensemble-AI-Studio",
+    "app.title": "Multi-Agenten-Rollenspiel",
     "status.ready": "Bereit",
     "status.running": "Läuft",
     "status.paused": "Pausiert",
@@ -711,6 +858,9 @@ _DE: dict[str, str] = {
     "menu.manage_scenes": "Szenenbibliothek verwalten…",
     "menu.new_scene": "Neue Szene",
     "menu.import_scene": "Szene importieren…",
+    "menu.knowledge": "Wissensbasis…",
+    "menu.relations": "Beziehungen…",
+    "menu.settle_pending": "Offene Abrechnung…",
     "menu.reset_scene": "Laufzeitkontext zurücksetzen…",
     "menu.add_character": "Figur hinzufügen",
     "menu.remove_character": "Figur entfernen",
@@ -759,7 +909,7 @@ _DE: dict[str, str] = {
 }
 
 _JA: dict[str, str] = {
-    "app.title": "Ensemble-AI-Studio",
+    "app.title": "マルチエージェント・ロールプレイ",
     "status.ready": "待機中",
     "status.running": "進行中",
     "status.paused": "一時停止",
@@ -781,6 +931,9 @@ _JA: dict[str, str] = {
     "menu.manage_scenes": "シーンライブラリ…",
     "menu.new_scene": "新しいシーン",
     "menu.import_scene": "シーンを読み込む…",
+    "menu.knowledge": "情報庫…",
+    "menu.relations": "関係…",
+    "menu.settle_pending": "未精算を決済…",
     "menu.reset_scene": "シーンの実行コンテキストをリセット…",
     "menu.add_character": "キャラクターを追加",
     "menu.remove_character": "キャラクターを退場",
@@ -829,7 +982,7 @@ _JA: dict[str, str] = {
 }
 
 _KO: dict[str, str] = {
-    "app.title": "Ensemble-AI-Studio",
+    "app.title": "다중 에이전트 롤플레이",
     "status.ready": "준비됨",
     "status.running": "진행 중",
     "status.paused": "일시정지",
@@ -851,6 +1004,9 @@ _KO: dict[str, str] = {
     "menu.manage_scenes": "장면 라이브러리 관리…",
     "menu.new_scene": "새 장면",
     "menu.import_scene": "장면 가져오기…",
+    "menu.knowledge": "지식 베이스…",
+    "menu.relations": "인간관계…",
+    "menu.settle_pending": "미결 정산…",
     "menu.reset_scene": "장면 실행 컨텍스트 초기화…",
     "menu.add_character": "캐릭터 추가",
     "menu.remove_character": "캐릭터 퇴장",

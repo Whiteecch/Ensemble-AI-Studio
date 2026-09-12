@@ -293,7 +293,7 @@ def test_close_scene_brings_the_empty_state_back(qapp, tmp_path):
     assert not win._configure_scene_btn.isEnabled()
     assert not win._action_save_scene.isEnabled()
     assert win._session_active is False, "没有场次就没有「开新场/切模型重开」"
-    assert win.windowTitle() == "Ensemble-AI-Studio · 群像", "标题回到未打开场景那一屏"
+    assert win.windowTitle() == "多智能体角色扮演", "标题回到未打开场景那一屏"
 
 
 def test_empty_state_open_button_goes_through_the_library(qapp, tmp_path, monkeypatch):
@@ -340,7 +340,8 @@ def test_empty_state_new_scene_and_new_character_buttons_are_wired(
     class _FakeCharEditor:
         saved_path = None
 
-        def __init__(self, card=None, characters_dir=None, parent=None):
+        def __init__(self, card=None, characters_dir=None, parent=None,
+                     **kw):      # libraries_root（§8.2 订阅区）由主窗口一并传下来
             seen["char_editor"] = (card, Path(characters_dir))
 
         def exec(self):

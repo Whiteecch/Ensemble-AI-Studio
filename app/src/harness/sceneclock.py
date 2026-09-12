@@ -93,3 +93,17 @@ class VirtualClock:
         self.freeze()
         self.rate = float(rate)
         self._baseline = self._monotonic()
+
+    def advance(self, seconds: int) -> None:
+        """把钟**整段前推** seconds（跳时间，§4.3）：场景跳过一段时间，钟跟着跳过去。
+
+        冻结值直接加；走时中的表先把已流逝折进冻结值再整体前推，**不丢已走的时间**、
+        **不改流速**、**不改变走/停状态**（跳完照原节奏接着走）——跳时间只是"时间过去了"，
+        不是重新起表。负值原样接受（调用方负责不传）。
+        """
+        running = self._baseline is not None
+        if running:
+            self.freeze()                  # 先折现（冻结值 = 此刻）
+        self._now += int(seconds)
+        if running:
+            self._baseline = self._monotonic()

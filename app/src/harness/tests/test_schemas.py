@@ -16,13 +16,13 @@ def test_message_knows_restricts_visibility():
     m = Message(id=2, speaker="丁", content="秘密", in_scene="餐厅",
                 knows=["丁", "戊"])
     assert m.is_visible_to("戊") is True
-    assert m.is_visible_to("己") is False
+    assert m.is_visible_to("庚") is False
 
 
 def test_scene_and_character_card_roundtrip():
     card = CharacterCard(
         name="丁", personality={"描述": "冷静"},
-        relationships={"戊": "同伴"}, knowledge_boundary=[],
+        relationships={"戊": "同伴"}, knowledge_seed=[],
     )
     assert card.weights.w2_arousal == 0.5  # 默认权重
     assert card.emotion_decay_rate == 0.4
@@ -64,12 +64,89 @@ def test_character_card_with_corpus_parses_and_dumps():
     dumped = card.model_dump()
     assert dumped["corpus"]["style"] == "短句、克制"
     assert dumped["corpus"]["samples"] == ["今晚这桌，我请。", "你倒是先说说看。"]
-    # 旧字段一字未改
+    # 旧字段一字未改（`knowledge_boundary` 已退役 → 换成 knowledge_seed，见下面那一组）
     assert set(dumped) == {"name", "personality", "abilities", "relationships",
-                           "knowledge_boundary", "weights", "emotion_decay_rate",
+                           "knowledge_seed", "weights", "emotion_decay_rate",
                            "corpus"}
     assert dumped["weights"]["w1_relevance"] == 0.5
     assert dumped["emotion_decay_rate"] == 0.4
+
+
+# ------------------------------------- knowledge_boundary 退役 + 读时迁移（§9.1）--
+
+def test_character_card_migrates_legacy_boundary_into_seed_in_order():
+    """老卡读时迁移（§9.1 第一步）：`knowledge_boundary` 逐条搬进 `knowledge_seed`，顺序不变。
+
+    这是本次改造的最高约束：用户卡上写的每一条边界都必须活着迁进信息库。迁移是**纯映射**
+    （只搬数据不碰磁盘），播种是 `knowledgestore.seed_from_card` 在库首次创建时的动作。
+
+    兜底句（"只知道自己经历和被告知的事"）**照搬不误**——它不是迁移该丢的，丢弃发生在
+    播种那一步（那份判据只有 `knowledgestore.KNOWLEDGE_FALLBACK` 一处定义）。迁移动它，
+    等于在"读一张卡"这个副作用为零的纯函数里替用户做了一次内容取舍。
+    """
+    card = CharacterCard.model_validate({
+        "name": "丁",
+        "knowledge_boundary": ["知道：那封信的内容", "不知道：信是谁写的",
+                               "只知道自己经历和被告知的事"],
+    })
+    assert card.knowledge_seed == ["知道：那封信的内容", "不知道：信是谁写的",
+                                   "只知道自己经历和被告知的事"]
+
+
+def test_character_card_seed_wins_when_both_keys_present():
+    """两个键都在（半迁移的卡）：以新键为准，老键淘汰——与 Scene 的 participants 同口径。"""
+    card = CharacterCard.model_validate({"name": "丁",
+                                         "knowledge_boundary": ["旧的"],
+                                         "knowledge_seed": ["新的"]})
+    assert card.knowledge_seed == ["新的"]
+
+
+def test_character_card_without_either_key_gets_empty_seed():
+    """两个键都没有（今天的新卡）→ 空种子：卡照常装载，"没有库"是合法状态（§9.2）。"""
+    assert CharacterCard.model_validate({"name": "丁"}).knowledge_seed == []
+    assert CharacterCard(name="丁").knowledge_seed == []
+
+
+def test_character_card_legacy_key_is_gone_from_the_schema():
+    """`knowledge_boundary` 不再是一个字段：不进 model_dump、写它也改不到卡上。
+
+    只留一个**只读派生**属性（`Scene.participants` 那套退役写法）给仍在读它的下游用，
+    免得退役一个字段就把模板导入的"未填字段"统计整段打挂。
+    """
+    card = CharacterCard.model_validate({"name": "丁", "knowledge_boundary": ["甲"]})
+    assert "knowledge_boundary" not in card.model_dump()
+    assert "knowledge_seed" in card.model_dump()
+    assert card.knowledge_boundary == ["甲"], "退役字段仍可读（派生自 knowledge_seed）"
+
+
+def test_character_card_migration_performs_no_io(monkeypatch):
+    """校验器里**绝不做 IO**（§9.1）：读一张带老键的卡不得产生任何磁盘写入/建库。
+
+    用陷阱证明，而不是靠"看代码没写 IO"：把一切写盘与建库入口换成"一碰就炸"，再读卡。
+    pydantic 的 `model_validator` 是纯函数——一旦有人在里面建了库，"列目录 / 编辑器预览 /
+    测试夹具"这些顺手的读卡动作全都会静默写出文件，排查起来是噩梦。
+    """
+    from pathlib import Path
+    import harness.knowledgestore as store
+
+    def _trap(*args, **kwargs):
+        raise AssertionError("读一张卡不该产生任何 IO（§9.1：校验器里绝不做 IO）")
+
+    monkeypatch.setattr(Path, "write_text", _trap)
+    monkeypatch.setattr(Path, "write_bytes", _trap)
+    monkeypatch.setattr(Path, "mkdir", _trap)
+    monkeypatch.setattr(Path, "touch", _trap)
+    monkeypatch.setattr(Path, "rename", _trap)
+    monkeypatch.setattr(Path, "replace", _trap)
+    monkeypatch.setattr(store, "save_library", _trap)
+    monkeypatch.setattr(store, "seed_from_card", _trap)
+
+    card = CharacterCard.model_validate({
+        "name": "丁",
+        "knowledge_boundary": ["知道：那封信的内容"],
+    })
+    assert card.knowledge_seed == ["知道：那封信的内容"]
+    assert card.model_dump()["knowledge_seed"] == ["知道：那封信的内容"]
 
 
 def test_scene_new_fields_default_to_empty():

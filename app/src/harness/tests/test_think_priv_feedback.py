@@ -165,7 +165,7 @@ def test_think_log_entries_carry_full_thinkresult_and_heard(tmp_path: Path):
     first_white = log[0]
     # 块1 全员只看到开场导演行
     assert first_white["speaker"] == "甲"
-    assert first_white["heard"] == "夜色渐深，两人对坐。"
+    assert first_white["heard"] == "夜晚的餐厅，二人临窗而坐。"
     fields = first_white["result"]
     assert {"aroused", "obligation_fulfilled", "goal_progress", "addressed",
             "impression_of_speaker", "urge"} == set(fields)

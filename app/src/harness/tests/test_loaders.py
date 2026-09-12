@@ -237,8 +237,7 @@ def test_shipped_cards_carry_usable_corpus():
     from harness.prompters import build_speak_messages, build_think_messages
 
     # 只查**内置演示卡**：用户往 characters/ 里自建的卡（语料可空）不该让测试套件变红。
-    shipped = [APP_DIR / "characters" / n
-               for n in ("福尔摩斯.json", "华生.json")]
+    shipped = [APP_DIR / "characters" / n for n in ("福尔摩斯.json", "华生.json")]
     paths = list_character_paths(APP_DIR / "characters")
     assert paths, "内置角色目录不该为空"
     for path in shipped:

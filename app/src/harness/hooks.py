@@ -5,12 +5,20 @@ SCENE agent 自己判断条件是否成立（不额外发起 LLM 调用），因
 场景补丁应用、以及给场景 agent 提示词用的钩子清单块。
 
 本模块不含 LLM、不做任何 IO；所有函数都不改动入参。
+
+唯一一处依赖 pydantic 的地方是 `Hook.__get_pydantic_core_schema__`：场景文件经由
+`Scene.model_dump()`（`schemas.Scene.hooks: list[Hook]`）落盘，那里要把**空的进离场
+原因**从存档里丢掉（留空 = 与今天逐字节相同，见该 classmethod）。Hook 本身仍是 stdlib
+dataclass，构造/`dataclasses.replace`/属性访问都不受这层桥影响。
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field, replace
-from typing import Iterable, Literal
+from dataclasses import dataclass, field, fields as dataclass_fields, replace
+from typing import Any, Iterable, Literal
+
+from pydantic import GetCoreSchemaHandler
+from pydantic_core import core_schema
 
 # ---------------------------------------------------------------------------
 # 类型
@@ -62,6 +70,22 @@ SCENE_IDENTITY_KEYS: frozenset[str] = frozenset({"path", "filename"})
 # ---------------------------------------------------------------------------
 # 数据模型
 # ---------------------------------------------------------------------------
+def _hook_to_dict(hook: Any) -> dict:
+    """`Hook` → 可 JSON 化的 dict（`Hook.__get_pydantic_core_schema__` 的序列化口）。
+
+    逐字段照抄（与 pydantic 的缺省 dataclass 序列化逐位相同），只多做一件事：
+    **空的 `reason` 不写出去**（理由见那个 classmethod）。容 dict 入参：万一某条路径
+    拿到的是已经摊平的 dict，这里不能炸。
+    """
+    if isinstance(hook, dict):
+        out = dict(hook)
+    else:
+        out = {f.name: getattr(hook, f.name) for f in dataclass_fields(type(hook))}
+    if not out.get("reason"):
+        out.pop("reason", None)
+    return out
+
+
 @dataclass
 class Hook:
     """一条场景钩子：条件成立时执行一个事件。
@@ -81,14 +105,44 @@ class Hook:
     character_name: str = ""                     # character 事件：角色名
     action: CharacterAction = "add"              # character 事件：动作
     turns: int = 0                               # character 事件：静默轮数
+    #: character 事件（add/remove）：进离场原因（《人际关系与场景推进》§5.1，缺省空 =
+    #: 今天的行为）。它是**当事人的私事**，不是给读者的公告：引擎只把它交给当事人自己
+    #: （knows 限定的一行上下文），绝不写进公共播报行，也绝不写进本模块的提示词块
+    #: （见 hooks_prompt_block）。留空时**连这个键都不落盘**（见 __get_pydantic_core_schema__）。
+    reason: str = ""
     scene_patch: dict = field(default_factory=dict)  # scene 事件：要改的字段
     enabled: bool = True                         # 用户可停用而不删除
     note: str = ""                               # 用户可见的备注/标签
 
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source: Any,
+                                     handler: GetCoreSchemaHandler):
+        """Hook 进出 pydantic（`Scene.hooks: list[Hook]`）时的桥：**空原因不落盘**。
+
+        场景文件即存档（《场景编排与桌面外壳》§5），而它是用户手里被跟踪的创作文件：
+        一个恒为空串的 `reason` 键会让「打开后按一次保存」就把每条钩子改一行——对拍、
+        备份、分享场景时全是无端噪声，也让「留空 = 与今天逐字节相同」（§5.3、铁律 3）
+        这条验收自述不成立。故序列化时把空的 reason 丢掉；**非空照写**（原因要能存进
+        场景文件、读得回来，见 `test_hook_reason_survives_a_scene_roundtrip`）。
+
+        只动序列化这一侧：校验仍是 pydantic 生成的 dataclass 模式（缺键 → 取默认值
+        `""`，所以老文件读得进、新文件读得回），`Hook` 也仍旧是一个 stdlib dataclass
+        （`dataclasses.replace` / `hook.reason` 这些老用法一字不改）。
+        """
+        schema = dict(handler(source))
+        schema["serialization"] = core_schema.plain_serializer_function_ser_schema(
+            _hook_to_dict)
+        return schema
+
 
 @dataclass
 class PendingCharacterAction:
-    """一条已判定成立、但需延迟 fire_after_rounds 轮才执行的角色动作。"""
+    """一条已判定成立、但需延迟 fire_after_rounds 轮才执行的角色动作。
+
+    `reason`（§5.1）随动作一起入队、一起到期——缺省空串，老调用方（不传它）一律照旧。
+    它只喂当事人自己的上下文；引擎在**入队那一刻**就把它交给当事人（那时他还在场，
+    还有块可以开口），见 `engine.schedule_cast_change`。
+    """
 
     character_name: str
     action: CharacterAction
@@ -97,6 +151,7 @@ class PendingCharacterAction:
     notify: list[str] = field(default_factory=list)
     notify_text: str = ""
     visible: bool = True
+    reason: str = ""
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +321,12 @@ def hooks_prompt_block(
     只列**启用中且 id 合法**（valid_hook_id）的钩子：id 不合法的钩子引擎永远查不到，
     写进提示词只会让模型照着一个打不响的名字报告——作者侧的报错由 validate 给出。
     全部被剔除（且无待触发动作）时返回空串，与空输入同。
+
+    **这里刻意不渲染 `PendingCharacterAction.reason`**（§5.2/§5.3）：本块是交给**场景
+    agent**（叙述者）的，它不是当事人——把一件私密的进离场原因写进去，等于让一个不该
+    看见它的模型读到它；而对"这一轮钩子成不成立"的判断，条件与效果本来就写在块里，原因
+    帮不上任何忙。故带原因与不带原因的这一块**逐字节相同**（有测试钉住）。原因的去向是
+    当事人自己的一份上下文，落行由引擎负责（`engine._post_reason_note`）。
     """
     active = [h for h in hooks if h.enabled and valid_hook_id(h.id)]
     if not active and not pending:

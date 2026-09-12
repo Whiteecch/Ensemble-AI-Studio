@@ -37,6 +37,12 @@ MENU_KEYS = (
     # §3.3 新增：配置场景 / 保存场景 / 导入场景 / 导入角色（都是顶栏菜单项）
     "menu.configure_scene", "menu.save_scene", "menu.import_scene",
     "menu.import_character",
+    # §8.4 新增：信息库编辑器的入口（顶栏第四段）
+    "menu.knowledge",
+    # 《人际关系与场景推进》§6.1 新增：关系编辑器的入口（顶栏第五段）
+    "menu.relations",
+    # §7.3 新增：角色菜单里的「结算待决…」（手动结算已离场的人）
+    "menu.settle_pending",
 )
 
 #: 最常见的按钮与状态：同样要求七种语言都有（界面最常看的就是这几处）。
@@ -50,7 +56,18 @@ COMMON_KEYS = (
 )
 
 #: 界面源码（i18n 键的**唯一**消费方）：扫描它们的字面量当回归网。
-_GUI_SOURCES = ("main_window.py", "library.py")
+#: 新增的界面文件（信息库编辑器、结算弹窗）必须一起进来——网是按文件跑的，落了谁，
+#: 谁里面打错的键就静默上线（`t()` 缺键回落成键本身，界面上的按钮字面就是 `btn.keeep`）。
+_GUI_SOURCES = ("main_window.py", "library.py",
+                "knowledge_editor.py", "settlement_dialog.py",
+                "relations_editor.py")
+
+#: 每个界面文件至少要扫到几个键字面量——扫描口径坏掉（AST 读不到、正则失效）时立刻红。
+#: 按文件给而不是给一个全局下限：弹窗只有十来处文案，用主窗口的门槛卡它等于永远红。
+#: 门槛取"当前实际值往下留一点"，降得下来就说明有人删了一大批键（或扫描坏了）。
+_MIN_KEY_LITERALS = {"main_window.py": 200, "library.py": 120,
+                     "knowledge_editor.py": 30, "settlement_dialog.py": 8,
+                     "relations_editor.py": 20}
 
 #: 「看起来像 i18n 键」的字面量：小写点分标识符（`panel.scene` / `btn.pause`）。
 _KEY_LIKE = re.compile(r"[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+")
@@ -281,9 +298,22 @@ def test_every_key_literal_in_the_gui_exists_in_the_zh_hans_catalog(name):
         checked += 1
         if literal not in catalog:
             missing.append(literal)
-    assert checked > 60, f"{name}：扫到的键字面量只有 {checked} 个，扫描口径可能坏了"
+    assert checked > _MIN_KEY_LITERALS.get(name, 8), \
+        f"{name}：扫到的键字面量只有 {checked} 个，扫描口径可能坏了"
     assert missing == [], f"{name}：这些键被用了但 zh-Hans 主目录里没有：{missing}"
 
+
+def test_the_new_gui_files_are_inside_the_literal_regression_net():
+    """新加的界面文件必须进回归网（§8.4）——网是按文件扫的，落了谁谁就没有保护。
+
+    结算弹窗（本特性最显眼的用户界面）与信息库编辑器各自消费一批键；不在网里的话，
+    某次改动里把 `btn.keep` 打成 `btn.keeep` 不会有任何测试变红（`t()` 缺键回落成键
+    本身），用户在四套主题、七种语言下看到的按钮字面就是那串内部名。
+    """
+    for name in ("knowledge_editor.py", "settlement_dialog.py",
+                 "relations_editor.py"):
+        assert name in _GUI_SOURCES, f"{name} 没进 i18n 字面量回归网"
+        assert name in _MIN_KEY_LITERALS, f"{name} 没有扫描下限，口径坏了不会红"
 
 def test_panel_log_is_present_in_every_catalog_including_the_master():
     """`panel.log` 六个非默认目录都落地了，zh-Hans 主目录也必须有一份。

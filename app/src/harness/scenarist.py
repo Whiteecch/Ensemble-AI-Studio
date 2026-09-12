@@ -162,7 +162,7 @@ def _clamp01(value: float) -> float:
 # 时间条件（钩子条件里的钟点：引擎侧确定性校验的**唯一**判据）
 # ===========================================================================
 # 为什么需要它（实况事故）：场景 阅览室 的钩子 h3/h3-2 条件是「虚拟钟走到 21:30」
-# → 乙/甲离场。用户在 ~19:03 加人，两人**立刻走了**（提前 2.5 小时）。根因：钩子
+# → 甲/乙离场。用户在 ~19:03 加人，两人**立刻走了**（提前 2.5 小时）。根因：钩子
 # 条件只由场景 LLM 判——引擎把当前钟点喂进提示词（【当前时刻】），却从不自己校验时间
 # 条件，模型误判即照执行。`time_condition_target` 就是那条确定性判据：条件**明确在说
 # 虚拟钟**时才给出目标秒数，其余一律 None（引擎不越权替模型判非时间条件）。
@@ -213,6 +213,460 @@ def time_condition_target(condition: str | None) -> int | None:
         except ValueError:                   # parse_hhmm 的越界口径兜底
             return None
     return None
+
+
+# ===========================================================================
+# 场景跳时间（《人际关系与场景推进》§四）：引擎侧的前件闸 + 四道闸的判据
+# ===========================================================================
+# 本节设计的灵魂是**严格限制，不许轻易跳**（§4.2）——宁可跳不成，也不要跳错。于是分两层：
+#
+#   · **前件闸**（§4.1 条件 1）由**引擎**判：「全员无话可说」= **本块没有任何人开口**
+#     且**在场每个人的发言倾向（bid）都低于阈值**，连续 K 块如此。bid 取
+#     `dynamics.Dynamics.bid()` 的**同一个**数值（与仲裁读的是同一个函数，不新增第二套
+#     数值系统）；模型说了不算——与 hooks 的时间闸门（time_condition_target +
+#     engine._time_gate）同一套思路：模型判断 + 引擎否决。**两半缺一不可**：只查 bid
+#     会在两人一句接一句对话时洞开（见 BID_SILENCE_THRESHOLD 的实况标定）。
+#   · **条件 2**（有一段持续性活动：睡觉/写作业/赶路/等天亮）由**场景 agent** 判——它
+#     在既有叙述那一路里提一条 `[[SKIP:<分钟>]] <叙述正文>` 指令；正文里必须点明过了
+#     多久并交代活动的结果（「30 分钟之后……作业终于写完了」），因为这条行存在的意义
+#     正是"把跳过的那段时间发生了什么一句话交代掉"（§4.3）。
+#   · 引擎拿到提案后过**四道闸**（§4.2）：前件闸 / 幅度闸（上限 + 小幅度优先 + 正文与钟
+#     必须对得上）/ 冷却闸 / 频次闸，另外**经过**既有的叙述节奏体系（不绕过它：自动档
+#     看引擎自己的"这一轮可以叙述"= 冷却 + 活跃度缩放后的触发线，见 engine._narrate）。
+#     被闸挡下一律留诊断，并回喂给模型（免得它每块重提同一条）。
+#
+# 本节全部是纯函数与纯数据：不给引擎做任何决定、不碰任何 IO、不推进任何钟——引擎只
+# "读"这里的判据（可离线单测；给定 bid 序列/提案即得能不能跳）。
+
+#: 「全员无话可说」的 bid 阈值（§4.1 条件 1 给的数）。
+#:
+#: 它与 `BidParams` 的关系说清楚（免得日后有人把两把尺混用）：`bidding.BidParams`
+#: 量的是仲裁那一档（`speak_threshold=0.1`：**数值 bid 低于它 = 全场静默**，见
+#: `bidding.arbitrate` 第 2 条），而本阈值量的是 `dynamics.Dynamics.bid()` 的同一个数，
+#: 只是取在更宽的一条粗线上：那里叠着沉默压力、欠答义务、点名额、recency 惩罚等项，
+#: 一个被点名未答的人 bid 轻松过 1。0.5 取在"这人此刻确实有话要说"的粗线上：低于它
+#: = 本人没有任何想开口的迹象。**它不是** arbitration 的阈值，改动它不动任何仲裁行为。
+#:
+#: 标定（改前先读）：仲裁在一块的**开头**读 bid，开口阈 0.1；而本闸在块的**末尾**读
+#: （`engine._observe_time_skip`，此时块末的 `tick_silence` 已给全员 +0.35 的沉默压力）。
+#: 于是"本块没人开口"⟹ 块末 bid 至多 ≈ 0.1 + 0.35 = 0.45 < 0.5：**沉默的块天然满足本项**，
+#: 而"有人被顶过开口阈值"的块会在下一块开口、由 `spoke` 归零（见 SilenceGate.observe）。
+#:
+#: **光有 bid 这一半是不够的**（实况错跳的根因）：`bid` 里有 `recency_penalty`（刚开口
+#: 的人 −0.6）与只涨一格的沉默压力，于是两人轮流说话时"说话人被扣到 −0.6、另一人只
+#: 沉默 1 块（≈0.3）"——**所有人的 bid 恰好都低于 0.5 每块都成立**、streak 能无限涨，
+#: 闸门于是在两人一句接一句对话时洞开（用户看到两个正在聊天的人中间插进"30 分钟之后，
+#: 作业写完了"）。故「全员无话可说」必须**同时**成立两半：本块没有任何人开口（有人开口
+#: = 他显然有话要说）+ 在场每个人的 bid 都低于阈值。见 `SilenceGate.observe`。
+BID_SILENCE_THRESHOLD = 0.5
+
+
+def all_bids_below(bids, threshold: float = BID_SILENCE_THRESHOLD) -> bool:
+    """本块所有人的 bid 是否都**严格低于**阈值（§4.1 条件 1 的**一半**）。
+
+    `bids` 为 {name: bid}（或等价的可迭代数值）。**空场一律不成立**：没有人可沉默时
+    "全员无话可说"在语义上是空的，而跳时间是最容易被滥用的能力——宁可跳不成。
+    恰好等于阈值不算「低于」（§4.1 的用词就是"低于"）。
+
+    另一半是「本块没有任何人开口」（见 `SilenceGate.observe`）——本函数只管 bid 这一半，
+    单独用它判"全员无话可说"会在两人轮流对话时误判为真（见 BID_SILENCE_THRESHOLD 标定）。
+    纯函数，绝不抛。
+    """
+    values = list(bids.values()) if isinstance(bids, dict) else list(bids or [])
+    if not values:
+        return False
+    return all(float(v) < float(threshold) for v in values)
+
+
+def silent_streak(bid_blocks, threshold: float = BID_SILENCE_THRESHOLD) -> int:
+    """逐块快照序列 → **尾部连续**「全员无话可说」的块数（中间被打断即从头数）。
+
+    每块是 `(bids, spoke)`：`spoke` = 本块有没有人开口（有 → 这一块不算，见
+    `SilenceGate.observe` 的两半）。只关心 bid 的调用方可以直接给裸的 `{name: bid}` 映射
+    （等价于 `spoke=False`），旧调用方因此逐字不变。
+
+    这是前件闸的语义定义（引擎侧持一个增量计数器 `SilenceGate`，两者共用
+    `all_bids_below` 这唯一判据）。纯函数：给定序列必得同一个数。
+    """
+    streak = 0
+    for block in bid_blocks or ():
+        bids, spoke = block if isinstance(block, tuple) else (block, False)
+        ok = not spoke and all_bids_below(bids, threshold)
+        streak = streak + 1 if ok else 0
+    return streak
+
+
+@dataclass
+class SilenceGate:
+    """前件闸的**增量**计数器：引擎每块末 observe 一次，绝不改任何数值、不推进任何钟。"""
+
+    threshold: float = BID_SILENCE_THRESHOLD
+    count: int = 0
+
+    def observe(self, bids, *, spoke: bool = False) -> int:
+        """折进本块的 bid 快照与「本块有没有人开口」，返回新的连续计数。
+
+        **一块算「全员无话可说」= 本块没有任何人开口 且 在场每个人的 bid 都低于阈值**
+        （§4.1 条件 1 的两半，缺一不可，见 BID_SILENCE_THRESHOLD 的标定）：
+          · 有人开口（`spoke=True`，本块有角色/人类台词落地）→ 他显然有话要说，**归零**。
+            只查 bid 会漏掉这一半——刚开口的人被 recency 扣到 −0.6、另一人只沉默 1 块，
+            "全员都低"于是每块都成立，闸门会在两人一句接一句对话时洞开；
+          · 没人开口但有人 bid 过了线（被点名欠答、情绪上来了）→ 他正想开口，同样归零。
+        """
+        if spoke or not all_bids_below(bids, self.threshold):
+            self.count = 0
+        else:
+            self.count += 1
+        return self.count
+
+    def ready(self, streak_blocks: int) -> bool:
+        """前件是否成立（计数达到 K 块；K≤0 = 不需要任何前件，只供测试/实验）。"""
+        return self.count >= int(streak_blocks)
+
+    def reset(self) -> None:
+        """跳过一次之后重新起算（活动已完结，下一次得重新攒够 K 块）。"""
+        self.count = 0
+
+
+@dataclass(frozen=True)
+class TimeSkipParams:
+    """跳时间的四道闸参数（缺省即设计文档 §4.2 的标定值）。
+
+    streak_blocks    前件闸的 K：连续这么多块全员无话可说才允许跳（默认 3）
+    max_jump_minutes 幅度闸：单次跳跃上限（默认 8 小时 = 480 分钟）
+    cooldown_blocks  冷却闸：跳过一次后这么多块内不许再跳（默认 10）
+    max_jumps        频次闸：整场最多跳几次（默认 3）
+    """
+
+    streak_blocks: int = 3
+    max_jump_minutes: int = 480
+    cooldown_blocks: int = 10
+    max_jumps: int = 3
+
+
+def effective_skip_params(params: TimeSkipParams | None = None,
+                          activity: float = 0.5) -> TimeSkipParams:
+    """按**推进活跃度**（0..1）缩放前件闸与冷却闸——**复用**既有的那一套缩放系数。
+
+    §6.2 的活跃度旋钮的语义是"活跃度越高 → 越常主动推进"，故这里照 `effective_params`
+    同一套公式与同一组常量（`_ACT_THRESHOLD_BASE/SLOPE` 缩 K、`_ACT_COOLDOWN_*` 缩 M），
+    **不另造一套参数**："高活跃度更容易开口"这条语义全仓库只有一处定义。两式都在
+    **a = 0.5** 处恒等，故缺省活跃度下本旋钮引入前后判据逐字节一致。
+
+    **幅度上限与整场次数是硬限制**，不随活跃度松（§4.2：那是"不许跳得太狠/太频繁"的
+    底线，不是节奏）。K 夹到 ≥1（0 会让前件闸名存实亡）、M 夹到 ≥0（0 = 无冷却）。
+    """
+    p = params or TimeSkipParams()
+    a = _clamp01(float(activity))
+    streak = int(round(p.streak_blocks * (_ACT_THRESHOLD_BASE - _ACT_THRESHOLD_SLOPE * a)))
+    cooldown = int(round(p.cooldown_blocks * (_ACT_COOLDOWN_BASE - _ACT_COOLDOWN_SLOPE * a)))
+    return replace(p, streak_blocks=max(1, streak), cooldown_blocks=max(0, cooldown))
+
+
+#: 跳时间指令的标记（与 `[[TOOL:`/`[[HOOK:` 同一套语法的第三个标记，半角、大小写精确）。
+SKIP_OPEN = "[[SKIP:"
+SKIP_CLOSE = "]]"
+_SKIP_MARK = SKIP_OPEN[:-1]          # "[[SKIP"：畸形写法（少冒号等）也要认得出来
+
+
+@dataclass(frozen=True)
+class ParsedTimeSkip:
+    """一次解析的结果：给人看的 text + 提案的分钟数 + 给日志的畸形片段。
+
+    `minutes is None` = 这一轮没有（合法的）跳时间提案。**text 的契约**：没有出现标记
+    时**逐字节原样返回**输入（不规范化、不动一个空格）——"不开启时逐字节不变"在解析层
+    的落点；出现标记时才做与 `parse_narration` 同一套的行内规范化并把标记剥干净。
+    """
+    text: str
+    minutes: int | None = None
+    malformed: list[str] = field(default_factory=list)
+
+
+def _strip_skip_markers(line: str, found: list[int], malformed: list[str]) -> str:
+    """剥掉一行里的 `[[SKIP:n]]` 标记，返回剩下的叙述片段。
+
+    与 `[[TOOL:...]]` 不同，**标记不吞行尾**：它后面（或下一行）的文字正是这一跳的
+    叙述正文（模型最自然的写法就是 `[[SKIP:30]] 30 分钟之后……`），所以只摘掉标记本身。
+    一行里出现多张合法指令时只认**第一张**，其余记进 malformed（绝不静默吞掉）。
+    畸形片段（有开头没 `]]`、非数字、空、负数）同样留痕并从正文里剥掉——语法泄进用户
+    看到的叙述是事故，宁可少几行。绝不抛异常。
+    """
+    while True:
+        start = line.find(_SKIP_MARK)
+        if start < 0:
+            return line
+        end = line.find(SKIP_CLOSE, start + len(_SKIP_MARK))
+        if end < 0:                       # 写一半被截断：整段收进 malformed
+            malformed.append(line[start:].strip())
+            return line[:start]
+        fragment = line[start:end + len(SKIP_CLOSE)]
+        header = line[start + len(_SKIP_MARK):end].strip()      # ":30"
+        number = header[1:].strip() if header.startswith(":") else ""
+        if found or not number.isdigit():
+            malformed.append(fragment)
+        else:
+            found.append(int(number))
+        line = line[:start] + line[end + len(SKIP_CLOSE):]
+
+
+def parse_time_skip(raw: str | None) -> ParsedTimeSkip:
+    """把一段叙述切成「给人看的正文」与「跳时间的提案分钟数」。**绝不抛异常**。
+
+    `raw=None/""`、没有标记 → text 逐字节原样返回（见 ParsedTimeSkip 的契约）。
+    """
+    source = "" if raw is None else str(raw)
+    if _SKIP_MARK not in source:
+        return ParsedTimeSkip(text=source)
+    found: list[int] = []
+    malformed: list[str] = []
+    lines: list[str] = []
+    for raw_line in source.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        had_marker = _SKIP_MARK in raw_line
+        kept = _strip_skip_markers(raw_line, found, malformed)
+        line = _normalise_line(kept)
+        if not line and had_marker:
+            continue      # 整行就是指令 → 不留空行
+        lines.append(line)
+    while lines and not lines[0]:
+        lines.pop(0)      # 首尾空行去掉；段间原有空行保留
+    while lines and not lines[-1]:
+        lines.pop()
+    return ParsedTimeSkip(text="\n".join(lines),
+                          minutes=found[0] if found else None,
+                          malformed=malformed)
+
+
+#: 「到次日清晨」那一类写法的钟点词（要算出时距，得先知道当前钟）。
+_DAWN_WORDS: tuple[str, ...] = ("天亮", "清晨", "早上", "早晨", "次日", "第二天",
+                                "一夜", "一宿")
+#: 清晨的钟点（就在这一天的这个时刻"天亮"）。
+_DAWN_HOUR = 6
+
+_CN_NUM = {"零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
+           "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+
+_MINUTE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?P<n>\d+)\s*分钟"),
+    re.compile(r"(?P<cn>[一二两三四五六七八九十]+)\s*分钟"),
+)
+_HOUR_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"(?P<n>\d+)\s*个?\s*小时"),
+    re.compile(r"(?P<cn>[一二两三四五六七八九十]+)\s*个?\s*小时"),
+)
+_HALF_HOUR_RE = re.compile(r"半\s*个?\s*小时")
+#: 模糊词（「几个小时后」）：取**最小**可表达值 = 2 小时——小幅度优先，见
+#: `judge_time_skip` 的幅度闸（模糊词各自可读成 2~9 小时，取最小的那个）。
+_VAGUE_HOURS_RE = re.compile(r"(?:几|数)\s*个?\s*(?:小时|钟头)")
+_VAGUE_HOURS_MINUTES = 120
+
+
+def _cn_number(text: str) -> int | None:
+    """中文数字（零~九十九）→ int；解析不了 → None（绝不猜）。"""
+    text = (text or "").strip()
+    if not text:
+        return None
+    if len(text) == 1:
+        return _CN_NUM.get(text)
+    if "十" in text:
+        head, _, tail = text.partition("十")
+        tens = _CN_NUM.get(head) if head else 1      # 「十五」的十是默认的一十
+        if tens is None:
+            return None
+        if not tail:
+            return tens * 10
+        ones = _CN_NUM.get(tail)
+        return None if ones is None else tens * 10 + ones
+    return None
+
+
+def _first_number(source: str, patterns: tuple[re.Pattern[str], ...]) -> int | None:
+    """按给定次序取**第一处**匹配的数量（阿拉伯数字或中文数字）；没有 → None。"""
+    for pattern in patterns:
+        match = pattern.search(source)
+        if match is None:
+            continue
+        groups = match.groupdict()
+        if groups.get("n"):
+            return int(groups["n"])
+        value = _cn_number(groups.get("cn") or "")
+        if value:
+            return value
+    return None
+
+
+def _minutes_to_dawn(clock_seconds: int) -> int:
+    """当前钟 → 次日清晨（_DAWN_HOUR 点）的分钟数（已经过了清晨点就数到明天）。"""
+    day = clock_seconds // sceneclock.SECONDS_PER_DAY
+    dawn = day * sceneclock.SECONDS_PER_DAY + _DAWN_HOUR * sceneclock.SECONDS_PER_HOUR
+    if dawn <= clock_seconds:
+        dawn += sceneclock.SECONDS_PER_DAY
+    return (dawn - clock_seconds) // sceneclock.SECONDS_PER_MINUTE
+
+
+def jump_minutes_from_text(text: str | None, *,
+                           clock_seconds: int | None = None) -> int | None:
+    """叙述正文里**说要过多久** → 分钟数；说不出（没有钟点词）→ None。
+
+    这是 §4.2「必须是钟点词能表达的整数」的机械读法，也是幅度闸"小幅度优先"的依据：
+    落地值与正文必须一致（正文说「30 分钟之后」而钟走了 8 小时，是读者一眼看得出的
+    矛盾），故申报值与正文时距取**较小**者。返回 None（正文没有钟点词）= 时距说不出，
+    幅度闸据此**拒绝**（钟偏移无从与正文互相校验，见 judge_time_skip）。
+
+    认得的写法：`30 分钟`/`三十分钟`/`半小时`/`一小时`/`两小时`/`12 个小时`/
+    `几个小时后`（模糊词取最小可表达值 2 小时）/`到了第二天早上`、`天亮了`（要算时距
+    得先知道当前钟，`clock_seconds` 为空时返回 None——绝不用猜测值替代）。
+    取**第一处**匹配（正文开头的钟点短语就是这一跳的时距）。纯函数，绝不抛。
+    """
+    source = "" if text is None else str(text)
+    minutes = _first_number(source, _MINUTE_PATTERNS)
+    if minutes:
+        return minutes
+    hours = _first_number(source, _HOUR_PATTERNS)
+    if hours:
+        return hours * 60
+    if _HALF_HOUR_RE.search(source):
+        return 30
+    if _VAGUE_HOURS_RE.search(source):
+        return _VAGUE_HOURS_MINUTES
+    if clock_seconds is not None and any(w in source for w in _DAWN_WORDS):
+        return _minutes_to_dawn(int(clock_seconds))
+    return None
+
+
+@dataclass(frozen=True)
+class TimeSkipVerdict:
+    """一次提案的判定结果（供引擎落行/拒绝并留诊断）。
+
+    granted  是否放行（False = 被某道闸挡下，一分一秒都不推）
+    minutes  实际生效的跳跃分钟数（granted=False 时恒为 0）
+    requested 模型申报的分钟数（诊断用）
+    gate     挡下它的那道闸："ok"/"precondition"/"body"/"rhythm"/"amplitude"/
+             "cooldown"/"frequency"
+    reason   中文一句话（日志/界面可读）
+    """
+    granted: bool
+    minutes: int
+    requested: int
+    gate: str
+    reason: str
+
+
+def judge_time_skip(requested_minutes: int, *, body: str,
+                    streak: int, blocks_since_last: int | None,
+                    jumps_done: int, implied_minutes: int | None = None,
+                    rhythm_ok: bool = True,
+                    params: TimeSkipParams | None = None) -> TimeSkipVerdict:
+    """四道闸的**唯一**判据：给定提案与当前状态 → 能不能跳、跳多久、为什么。
+
+    入参全是显式的普通数据（不读引擎、不读钟），故可离线逐条单测。判定次序固定
+    （同时不过时报**第一条**，便于诊断）：
+
+      1. **前件闸** `streak ≥ K`：条件 1 不成立**无条件否决**（模型说跳也不跳，§4.2）；
+      2. **正文闸** body 非空：这条行存在的意义就是宣告"活动完成"（§4.3），空正文没有
+         可落的东西；
+      3. **节奏闸** `rhythm_ok`：跳时间**经过**既有的叙述节奏体系（§4.2 末条），不绕过
+         它——自动档传引擎自己的"这一轮可以叙述"（冷却 + 活跃度缩放后的**触发线**），
+         手动推进（用户点了「推进一下」）只保留冷却那一半；
+      4. **幅度闸**：正文必须**自己点明过了多久**（§4.2「必须是钟点词能表达的整数」、
+         §4.3 的正文格式），且正文时距不得**大于**申报值（否则取小者会留下"正文说
+         「10 小时之后」而钟只走 30 分钟"的矛盾）；min(申报, 正文时距) 还须 ≤
+         max_jump_minutes 且为正。**小幅度优先**落在这一步：取小者（能跳 30 分钟就不跳
+         3 小时）；
+      5. **冷却闸**：距上次跳跃 ≥ M 块（`blocks_since_last=None` = 从未跳过 → 无冷却）；
+      6. **频次闸**：整场跳跃次数 < N。
+
+    幅度闸的选择是**拒绝**（不是截到上限）：截断会让正文与钟偏移对不上（正文写着
+    「10 小时之后」而钟只走了 8 小时），拒绝则整条提案作废、下一块模型自然会提个更小的。
+    同理，"正文没点明时距"（`implied_minutes=None`：正文说「灯灭了。」而申报 480 分钟）
+    与"正文比钟走得远"也一律拒绝——这条行的正文与钟必须互相对得上（钟不能骗人）。
+    """
+    p = params or TimeSkipParams()
+    try:
+        requested = int(requested_minutes)
+    except (TypeError, ValueError):
+        requested = 0
+    text = (body or "").strip()
+
+    def _reject(gate: str, reason: str) -> TimeSkipVerdict:
+        return TimeSkipVerdict(granted=False, minutes=0, requested=requested,
+                               gate=gate, reason=reason)
+
+    if int(streak) < p.streak_blocks:
+        return _reject("precondition",
+                       f"前件不成立：连续无话可说只有 {int(streak)} 块"
+                       f"（需 {p.streak_blocks} 块），本次不跳")
+    if not text:
+        return _reject("body", "提案没有正文：跳时间必须交代那段时间里活动的结果")
+    if not rhythm_ok:
+        return _reject("rhythm", "叙述冷却/活跃度闸未过（既有的推进节奏），本次不跳")
+    if requested <= 0:
+        return _reject("amplitude", f"跳跃分钟数必须是正整数（收到 {requested}）")
+    if implied_minutes is None:
+        # 正文自己没点明"过了多久"：这一跳在用户眼里就是"钟莫名其妙走了"——§4.2 要求
+        # 时距必须是钟点词能表达的整数，§4.3 要求正文交代这段时间去哪了。
+        return _reject("amplitude",
+                       "正文没有点明过了多久（「30 分钟之后」「天亮了」这类钟点词），"
+                       "钟偏移无从与正文互相校验")
+    if int(implied_minutes) > requested:
+        # 正文比钟走得**远**（正文「10 小时之后」而指令只报 30 分钟）：取小者会留下
+        # "正文说一夜过去了、钟只走半小时"的镜像矛盾，故拒绝而不是取小。
+        return _reject("amplitude",
+                       f"正文说要过 {int(implied_minutes)} 分钟、指令只报 {requested} 分钟"
+                       f"（钟不能骗人），本次不跳")
+    effective = min(requested, int(implied_minutes))
+    if effective > p.max_jump_minutes:
+        return _reject("amplitude",
+                       f"跳跃 {effective} 分钟超过单次上限 {p.max_jump_minutes} 分钟")
+    if blocks_since_last is not None and int(blocks_since_last) < p.cooldown_blocks:
+        return _reject("cooldown",
+                       f"距上次跳跃只过了 {int(blocks_since_last)} 块"
+                       f"（冷却 {p.cooldown_blocks} 块）")
+    if int(jumps_done) >= p.max_jumps:
+        return _reject("frequency",
+                       f"本场已跳 {int(jumps_done)} 次（上限 {p.max_jumps} 次）")
+    return TimeSkipVerdict(granted=True, minutes=effective, requested=requested,
+                           gate="ok",
+                           reason=f"放行：跳 {effective} 分钟（申报 {requested}）")
+
+
+def time_skip_prompt_block(params: TimeSkipParams | None = None, *,
+                           streak: int = 0, jumps: int = 0,
+                           blocks_since: int | None = None,
+                           last_rejection: str | None = None) -> str:
+    """给场景提示词的「可以跳时间」块：讲清两个条件、四道闸的数值与当前前件状态。
+
+    只在引擎开着跳时间时附上（关掉时一个字节都不加，见 engine._scene_prompt_extra）；
+    把当前状态也写进去，是为了让模型自己权衡"现在够不够格提"——引擎另有一道硬判据
+    兜底（模型判断 + 引擎否决），这里少提一条没意义的提案就省一块的纠缠。
+
+    `last_rejection`：上一次提案被哪道闸挡下（引擎的 `time_skip_state()["records"]` 里
+    那一句中文理由）。**必须回喂**：模型照示例提「到了第二天早上」而被幅度上限拒绝时，
+    它无从知道为什么——于是每块重提一遍，白烧 token 又推不动（实况：22:00 前开场的
+    "等天亮"必然超上限）。回喂的只是**引擎自己的判定结果**，不放宽任何一道闸。
+    """
+    p = params or TimeSkipParams()
+    hours = p.max_jump_minutes / 60
+    since = "尚未跳过" if blocks_since is None else f"距上次跳跃 {int(blocks_since)} 块"
+    lines = [
+        "【可以跳时间】只有**同时**满足下面两条时才可以跳：",
+        f"① 在场所有人此刻都无话可说（发言倾向都很低、没有人在说话），且已经连续 "
+        f"{p.streak_blocks} 块如此；",
+        "② 场景里正发生一件要花时间的事：睡觉、写作业、赶路、等天亮。",
+        "要跳时，另起一行写一条指令，格式（分钟数是整数）：",
+        f"{SKIP_OPEN}30{SKIP_CLOSE} 30 分钟之后，桌上的灯熄了，作业终于写完了。",
+        "指令后面（或下一行）写这一跳的叙述正文：开头用钟点词点明过了多久"
+        "（「30 分钟之后」「一小时后」「到了第二天早上」），再把这段时间里那件事的结果"
+        "交代掉。**正文里的时距要与指令报的分钟数一致**——正文说的时间更长就整条作废。",
+        f"单次最多 {p.max_jump_minutes} 分钟（约 {hours:g} 小时），且**越小越好**："
+        "能写 30 分钟就别写 3 小时。",
+        f"跳过一次之后要过 {p.cooldown_blocks} 块才能再跳；整场最多跳 {p.max_jumps} 次。",
+        "不满足这两条时**绝不要**写这条指令——宁可不跳，也不要跳错。",
+        f"（当前：连续 {int(streak)}/{p.streak_blocks} 块无人接话；"
+        f"本场已跳 {int(jumps)}/{p.max_jumps} 次；{since}。）",
+    ]
+    if last_rejection:
+        lines.append(f"（上一次提案被挡下了，别再原样重提：{last_rejection}）")
+    return "\n".join(lines)
 
 
 def _character_lines(messages: list[dict], window: int) -> list[str]:

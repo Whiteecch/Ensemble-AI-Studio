@@ -6,7 +6,7 @@
     sig_cast 后可用；
   · 点击接线：添加角色子菜单（排除已在场者）→ worker.add_character；移出角色子菜单 →
     worker.remove_character；高级移入/移出弹窗确定 → worker.schedule_cast_change
-    （人名 / 动作 / 回合 / 通知对象全按弹窗里选的传）；
+    （人名 / 动作 / 回合 / 原因 / 通知对象全按弹窗里选的传，原因留空即今天的行为）；
   · sig_cast 反应：载荷里少了一人 → 左栏冲动行与右栏角色卡当场只剩在场者（被移出者的
     句柄消失）、场景卡在场名单同步；新进场者补一行一卡；禁言者在两侧缀「禁言中（剩 N
     回合）」徽标；
@@ -26,7 +26,7 @@ pytest.importorskip("PySide6")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QObject, Signal  # noqa: E402
-from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialog, QLabel, QLineEdit  # noqa: E402
 
 from harness.gui import main_window as mw_mod  # noqa: E402
 from harness.gui import settings as settings_mod  # noqa: E402
@@ -125,10 +125,11 @@ class _FakeWorker(QObject):
 
     def schedule_cast_change(self, character_name, action, fire_after_rounds,
                              notify=None, notify_text="", visible=True,
-                             turns: int = 0) -> None:
+                             turns: int = 0, reason: str = "") -> None:
         self.scheduled.append((str(character_name), str(action),
                                int(fire_after_rounds), list(notify or []),
-                               str(notify_text), bool(visible), int(turns)))
+                               str(notify_text), bool(visible), int(turns),
+                               str(reason)))
 
     # ---- MainWindow 也会连/调的那些（本模块用不到，给空实现）----
     def start_scene(self, **kwargs) -> None:  # noqa: D102
@@ -215,11 +216,11 @@ def _menu_action(menu, text: str):
 
 # ============================================================ 1. 菜单结构
 def test_character_menu_has_exactly_the_spec_items_in_order(qapp, tmp_path):
-    """角色菜单六项，顺序即设计文档 §2.1③/§3.3（新增「导入角色…」）。"""
+    """角色菜单七项，顺序即设计文档 §2.1③/§3.3（新增「导入角色…」与「结算待决…」§7.3）。"""
     win, _worker, _cdir = _make_window(tmp_path)
     texts = [a.text() for a in win._menu_character.actions()]
     assert texts == ["添加角色", "移出角色", "新建角色", "导入角色…",
-                     "管理角色…", "高级移入/移出…"]
+                     "管理角色…", "高级移入/移出…", "结算待决…"]
     assert win._menu_character.title() == "角色"
     assert win._action_import_character.text() == "导入角色…"
 
@@ -302,7 +303,7 @@ def test_advanced_dialog_accept_schedules_cast_change(qapp, tmp_path):
     dlg.ok_btn.click()
 
     assert worker.scheduled == [("丙", "remove", 5, ["甲", "丙", "场景"],
-                                 "丙待会儿走", True, 0)]
+                                 "丙待会儿走", True, 0, "")]
     assert dlg.result() == QDialog.DialogCode.Accepted
 
 
@@ -312,7 +313,56 @@ def test_advanced_dialog_without_notify_schedules_plain_change(qapp, tmp_path):
     dlg = AdvancedCastDialog(worker, ["甲"], [])
     dlg.rounds_spin.setValue(0)                            # 0 = 立即
     dlg.ok_btn.click()
-    assert worker.scheduled == [("甲", "add", 0, [], "", True, 0)]
+    assert worker.scheduled == [("甲", "add", 0, [], "", True, 0, "")]
+
+
+# ============================= 2b. 高级移入/移出：原因框（§5.1）
+def test_advanced_dialog_has_a_reason_field_that_defaults_to_empty(qapp, tmp_path):
+    """原因框：跟 HookEditorDialog.reason_edit 一样——空 = 今天的行为、占位符教用户填什么。
+
+    它同时是「界面上可达」的证据：设计文档 §5.1 点名这个弹窗要能写进离场原因，而
+    `HookEditorDialog` 那条路（场景卡里的 hook）走不到「人在场时临时请他走」这个用法。
+    """
+    _win, worker, _cdir = _make_window(tmp_path)
+    dlg = AdvancedCastDialog(worker, ["甲"], ["甲"])
+
+    assert isinstance(dlg.reason_edit, QLineEdit), "部件名固定：reason_edit"
+    assert dlg.reason_edit.text() == "", "缺省留空 = 与今天逐字节相同"
+    assert dlg.reason_edit.placeholderText().strip(), "占位符要教用户这里填什么"
+
+
+def test_advanced_dialog_reason_label_says_it_is_private(qapp, tmp_path):
+    """原因只交给当事人自己（§5.2）——标签必须讲清「别人看不到」，否则会被当成全场叙述。"""
+    _win, worker, _cdir = _make_window(tmp_path)
+    dlg = AdvancedCastDialog(worker, ["甲"], ["甲"])
+    texts = [lb.text() for lb in dlg.findChildren(QLabel)]
+    hit = [s for s in texts if "原因" in s]
+    assert hit, f"弹窗里没有原因说明文案：{texts}"
+    assert any("别人看不到" in s for s in hit), hit
+
+
+def test_advanced_dialog_accept_schedules_cast_change_with_reason(qapp, tmp_path):
+    """带原因的预约：原因框内容进 worker.schedule_cast_change 的 reason 实参，首尾空白裁掉。"""
+    _win, worker, _cdir = _make_window(tmp_path, cards=("甲", "乙"))
+    dlg = AdvancedCastDialog(worker, ["甲", "乙"], ["甲"])
+    dlg.name_combo.setCurrentIndex(1)                      # 乙
+    dlg.remove_radio.setChecked(True)
+    dlg.rounds_spin.setValue(3)
+    dlg.reason_edit.setText("  去见师父  ")
+    dlg.ok_btn.click()
+
+    assert worker.scheduled == [("乙", "remove", 3, [], "", True, 0, "去见师父")]
+    assert dlg.result() == QDialog.DialogCode.Accepted
+
+
+def test_advanced_dialog_blank_reason_keeps_todays_call_shape(qapp, tmp_path):
+    """留空即今天的行为：reason 传空串（不是 None、不是缺参），别的实参一字不动。"""
+    _win, worker, _cdir = _make_window(tmp_path)
+    dlg = AdvancedCastDialog(worker, ["甲"], [])
+    dlg.reason_edit.setText("   ")                         # 全是空白 = 没写
+    dlg.rounds_spin.setValue(2)
+    dlg.ok_btn.click()
+    assert worker.scheduled == [("甲", "add", 2, [], "", True, 0, "")]
 
 
 def test_advanced_dialog_without_cards_warns_and_does_not_schedule(qapp, tmp_path,
@@ -477,7 +527,8 @@ def test_manager_remove_and_edit_go_through_worker_and_library(qapp, tmp_path,
     class _FakeEditor:
         saved_path = None
 
-        def __init__(self, card=None, characters_dir=None, parent=None):
+        def __init__(self, card=None, characters_dir=None, parent=None,
+                     **kw):      # libraries_root（§8.2 订阅区）由主窗口一并传下来
             seen["card"] = card
             seen["dir"] = Path(characters_dir)
 
@@ -547,7 +598,8 @@ def test_manager_runs_off_the_main_window_menu(qapp, tmp_path, monkeypatch):
     seen: dict = {}
 
     class _FakeManager:
-        def __init__(self, cast, w, characters_dir, parent=None):
+        def __init__(self, cast, w, characters_dir, parent=None, **kw):
+            # **kw：libraries_root（§8.2 订阅区）由主窗口一并传下来，替身照收不误。
             seen.update(cast=dict(cast), worker=w,
                         dir=Path(characters_dir), parent=parent)
 

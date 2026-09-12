@@ -33,10 +33,10 @@ from pathlib import Path
 
 #: app/ 根（scenes/characters/config 所在目录），保证任意 cwd 下双击/模块启动都命中素材。
 _APP_DIR = Path(__file__).resolve().parents[3]
-_DEFAULT_SCENE = _APP_DIR / "scenes" / "贝克街221B.json"
+_DEFAULT_SCENE = _APP_DIR / "scenes" / "餐厅.json"
 _DEFAULT_CHARACTERS = [
-    _APP_DIR / "characters" / "福尔摩斯.json",
-    _APP_DIR / "characters" / "华生.json",
+    _APP_DIR / "characters" / "甲.json",
+    _APP_DIR / "characters" / "乙.json",
 ]
 _DEFAULT_MODELS = _APP_DIR / "config" / "models.yaml"
 _DEFAULT_BID = _APP_DIR / "config" / "bid.demo.yaml"
@@ -45,11 +45,11 @@ _DEFAULT_RUN_ROOT = _APP_DIR / "runs"
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        prog="ensemble-gui",
-        description="Ensemble-AI-Studio 桌面端：角色自主持续对话，人类随时插话。")
+        prog="harness-gui",
+        description="多智能体角色扮演桌面端：角色自主持续对话，人类随时插话。")
     ap.add_argument("--scene", type=Path, help="场景 JSON；缺省内置 scenes/贝克街221B.json")
     ap.add_argument("--characters", type=Path, nargs="+",
-                    help="角色卡 JSON；缺省内置 福尔摩斯.json 华生.json")
+                    help="角色卡 JSON；缺省内置 甲.json 乙.json")
     ap.add_argument("--models", type=Path,
                     help="基础模型 yaml；缺省内置 config/models.yaml（live 自动切 "
                          "models.live.yaml）")
@@ -114,7 +114,7 @@ def run(argv: list[str] | None = None) -> int:
     live = resolve_live(args.stub, api_key)      # 缺 key 自动落 stub（同 runner 语义）
 
     app = QApplication(sys.argv[:1])             # 只传程序名，免得 Qt 吃我们的旗标
-    app.setApplicationName("Ensemble-AI-Studio")
+    app.setApplicationName("多智能体角色扮演")
     # 语言与配色写进 app 属性：library 的对话框（无窗口上下文）按这两个属性取文案与
     # 样式表（§7 / §2.1①）——不先写，已存英文/深色的用户会看到中文、默认配色的弹窗。
     app.setProperty("language", settings.language)

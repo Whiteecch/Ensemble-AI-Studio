@@ -13,7 +13,13 @@ AppSettings，以及把它读写到「用户数据目录」下的 settings.json�
   - 语言 language ∈ zh-Hans/zh-Hant/en/fr/de/ja/ko
   - 自动保存周期 autosave_every ∈ 5/20/50/100（轮）
   - 场景推进活跃度 narrate_activity ∈ 0.2/0.5/0.8/1.0（§6.2「少/中/多/极多」）
+  - 信息库检索 knowledge_enabled ∈ 真/假（§10.2，缺省**开**）
+  - 流式开口 stream_speak ∈ 真/假（§二，缺省**关**，见 DEFAULT_STREAM_SPEAK 的理由）
 文件里某一字段非法时**只回落该字段**的默认值，其余字段照旧保留。
+
+**新增字段必须同时进 `from_dict` 与字段白名单**（`update` 的白名单是 dataclass 的字段
+集合，`to_dict` 也是）：§10.2 点名的坑就是"没同步白名单 → 用户改的值被静默丢弃"，
+界面看起来正常、引擎却照旧按默认跑。
 """
 from __future__ import annotations
 
@@ -26,7 +32,7 @@ from pathlib import Path
 from typing import Any
 
 # 用户数据目录名（Windows: %APPDATA%/<此名>/settings.json；其余: ~/.config/<此名>/…）
-APP_DIR_NAME = "Ensemble-AI-Studio"
+APP_DIR_NAME = "文字创作agent"
 SETTINGS_FILE_NAME = "settings.json"
 
 THEMES: tuple[str, ...] = ("默认", "深色", "白色", "深蓝")
@@ -41,6 +47,24 @@ DEFAULT_THEME = "默认"
 DEFAULT_LANGUAGE = "zh-Hans"
 DEFAULT_AUTOSAVE_EVERY = 20
 DEFAULT_NARRATE_ACTIVITY = 0.5
+
+#: 「信息库检索」缺省**开**（§10.2）：关 = 与没有信息库同义（不注入索引、不传 tools、
+#: 不执行取用），整场行为**退回今天**。缺省开是刻意的——信息库是这套系统的常态，
+#: 关掉它是一个降级开关，不是一个可选特性。
+DEFAULT_KNOWLEDGE_ENABLED = True
+
+#: 「流式开口」（《人际关系与场景推进》§二）缺省**开**——这是**产品行为**，不是可选特性：
+#: 需求原话是"人物的对话都采用流式输出"，逐字出现给思考留出时间、不那么生硬，是这一批
+#: 要的默认观感。
+#:
+#: **层次要说清**：这里是**产品缺省**（设置 / worker / 窗口这一层）；`graph.build_graph`
+#: 与 `SceneEngine` 的 `stream_speak` 参数缺省仍是 **False**——"不开启时从后端调用到事件流
+#: 到界面逐字节、逐事件、逐调用次数相同"这条不变量留在低层，由它守住：谁显式传 False
+#: （测试、CLI、或用户关掉这个开关），跑的就是那条老路。
+#:
+#: 关掉它的代价（用户自己权衡）：模型说到一半你也看得见——**包括**罕见的近重复作废那一次
+#: "话说一半消失了"。逐字出现好看，但值不值得这个代价交给用户。
+DEFAULT_STREAM_SPEAK = True
 
 
 def _as_text(value: Any) -> str:
@@ -69,6 +93,26 @@ def _as_autosave(value: Any) -> int:
     else:
         return DEFAULT_AUTOSAVE_EVERY
     return n if n in AUTOSAVE_EVERY else DEFAULT_AUTOSAVE_EVERY
+
+
+def _as_flag(value: Any, default: bool) -> bool:
+    """宽容地读一个是非开关（§10.2「信息库检索 开/关」）。**永不抛。**
+
+    与 `knowledgestore._as_bool` 同一套路：认真 `bool`、`0`/`1`（JSON 里手写成数字很常见）、
+    以及 `true/false/yes/no/on/off` 这类字符串（手改时大小写随意）。其余（`"久了"`、列表、
+    NaN…）→ `default`。读不出来就往"默认"降级，绝不把异常带出 `load()`。
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return {0: False, 1: True}.get(value, default)
+    if isinstance(value, float):
+        return {0.0: False, 1.0: True}.get(value, default) if math.isfinite(value) else default
+    if isinstance(value, str):
+        return {"true": True, "1": True, "yes": True, "on": True,
+                "false": False, "0": False, "no": False, "off": False,
+                }.get(value.strip().casefold(), default)
+    return default
 
 
 def snap_narrate_activity(value: Any) -> float:
@@ -110,6 +154,12 @@ class AppSettings:
     autosave_every: int = DEFAULT_AUTOSAVE_EVERY   # 轮：5/20/50/100
     #: 场景推进活跃度（§6.2）：0.2/0.5/0.8/1.0 = 少/中/多/极多；越高越常主动插叙。
     narrate_activity: float = DEFAULT_NARRATE_ACTIVITY
+    #: 信息库检索 开/关（§10.2）：关 = 与没有信息库同义——不注入索引、不传 tools、不执行
+    #: 取用，整场行为退回今天。**缺省开**（见 DEFAULT_KNOWLEDGE_ENABLED 的理由）。
+    knowledge_enabled: bool = DEFAULT_KNOWLEDGE_ENABLED
+    #: 流式开口（§二）：开 = 台词逐字出现（走 complete_text_stream 的新通道）。
+    #: **缺省关**（见 DEFAULT_STREAM_SPEAK 的理由）——不开启时一切与今天逐字节相同。
+    stream_speak: bool = DEFAULT_STREAM_SPEAK
 
     def to_dict(self) -> dict[str, Any]:
         """转为可 JSON 序列化的普通字典（快照，改它不影响本对象）。"""
@@ -131,6 +181,11 @@ class AppSettings:
             autosave_every=_as_autosave(d.get("autosave_every", DEFAULT_AUTOSAVE_EVERY)),
             narrate_activity=snap_narrate_activity(
                 d.get("narrate_activity", DEFAULT_NARRATE_ACTIVITY)),
+            knowledge_enabled=_as_flag(d.get("knowledge_enabled",
+                                             DEFAULT_KNOWLEDGE_ENABLED),
+                                       DEFAULT_KNOWLEDGE_ENABLED),
+            stream_speak=_as_flag(d.get("stream_speak", DEFAULT_STREAM_SPEAK),
+                                  DEFAULT_STREAM_SPEAK),
         )
 
     def as_dict(self) -> dict[str, Any]:  # 兼容别名

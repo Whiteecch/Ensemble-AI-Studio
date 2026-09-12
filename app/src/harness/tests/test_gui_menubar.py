@@ -137,7 +137,7 @@ class _FakeWorker(QObject):
 
     def schedule_cast_change(self, character_name, action, fire_after_rounds,
                              notify=None, notify_text="", visible=True,
-                             turns: int = 0) -> None:
+                             turns: int = 0, reason: str = "") -> None:
         self.calls.append({"schedule_cast_change": character_name})
 
     def restart(self, *a, **k) -> None:
@@ -236,10 +236,11 @@ def _unique_colour(theme: str) -> str:
 
 # ============================================================ 1. 菜单结构
 def test_top_level_menus_exist_in_the_exact_order(qapp, tmp_path, tmp_store):
-    """顶栏三段：设置 / 场景 / 角色（顺序即设计文档 §2.1 的从左到右）。"""
+    """顶栏：设置 / 场景 / 角色 / 信息库… / 关系…（前三段顺序即设计文档 §2.1，
+    第四段见 §8.1，第五段见《人际关系与场景推进》§6.1）。"""
     win, _worker, _dirs = _make_window(tmp_path)
     titles = [a.text() for a in win.menuBar().actions()]
-    assert titles == ["设置", "场景", "角色"]
+    assert titles == ["设置", "场景", "角色", "信息库…", "关系…"]
     assert win._menu_settings.title() == "设置"
     assert win._menu_scene.title() == "场景"
     assert win._menu_character.title() == "角色"
@@ -282,7 +283,8 @@ def test_character_menu_lists_the_spec_items_in_order(qapp, tmp_path, tmp_store,
     win, _worker, (cdir, _sdir) = _make_window(tmp_path)
     acts = win._menu_character.actions()
     assert [a.text() for a in acts] == ["添加角色", "移出角色", "新建角色",
-                                       "导入角色…", "管理角色…", "高级移入/移出…"]
+                                       "导入角色…", "管理角色…", "高级移入/移出…",
+                                       "结算待决…"]
     assert win._action_add_character.isEnabled() is False, "没开场时不该能加人"
     assert "打开" in win._action_add_character.toolTip(), "禁用要说明原因"
     assert win._action_remove_character.isEnabled() is False, "没开场时不该能移人"
@@ -297,7 +299,8 @@ def test_character_menu_lists_the_spec_items_in_order(qapp, tmp_path, tmp_store,
     class _FakeEditor:
         saved_path = None
 
-        def __init__(self, card=None, characters_dir=None, parent=None):
+        def __init__(self, card=None, characters_dir=None, parent=None,
+                     **kw):      # libraries_root（§8.2 订阅区）由主窗口一并传下来
             seen["card"] = card
             seen["dir"] = characters_dir
             seen["parent"] = parent
@@ -1009,7 +1012,7 @@ def test_saved_english_settings_translate_menus_buttons_and_labels(
 
     # 顶栏菜单：标题与各项
     assert [a.text() for a in win.menuBar().actions()] == \
-        ["Settings", "Scene", "Character"]
+        ["Settings", "Scene", "Character", "Knowledge base…", "Relationships…"]
     assert win._menu_settings.actions()[0].text() == "Model API config…"
     assert [a.text() for a in win._menu_settings.actions() if a.menu() is not None] == \
         ["Theme", "Language", "Autosave interval"]
@@ -1018,7 +1021,7 @@ def test_saved_english_settings_translate_menus_buttons_and_labels(
          "Manage scene library…", "New scene", "Import scene…"]
     assert [a.text() for a in win._menu_character.actions()] == \
         ["Add character", "Remove character", "New character", "Import character…",
-         "Manage characters…", "Advanced add/remove…"]
+         "Manage characters…", "Advanced add/remove…", "Settle pending…"]
     assert win._autosave_actions[5].text() == "Every 5 rounds"
     assert win._language_actions["ja"].text() == "日本語", "语言项用母语名（是数据不是文案）"
 
@@ -1036,7 +1039,7 @@ def test_saved_english_settings_translate_menus_buttons_and_labels(
     assert win._auto_scene_check.text() == "自动推进"
     assert "toggle." not in win._live_check.text()
     assert win._status_chip.text() == "Ready"
-    assert win.windowTitle() == "Ensemble-AI-Studio"
+    assert win.windowTitle() == "Multi-Agent Roleplay"
 
     # 左栏卡片标题：已覆盖的键是英文，未覆盖的键回落中文（可见降级，不是空白/键名）
     left = _left_labels(win)
@@ -1086,7 +1089,7 @@ def test_runtime_language_switch_retranslates_in_place_and_back(qapp, tmp_path, 
     assert win._reopen_btn.text() == "开新场"
     assert win._input_edit.placeholderText() == "说点什么——随时打断，角色会回应…"
     assert win._status_chip.text() == "就绪"
-    assert win.windowTitle() == "Ensemble-AI-Studio · 群像"
+    assert win.windowTitle() == "多智能体角色扮演"
     left = _left_labels(win)
     for text in ("运行指标", "运行控制", "场景推进", "场　景", "在场人数",
                  "边界", "自动推进", "推进一下", "真实模型"):
@@ -1100,13 +1103,13 @@ def test_scene_title_keeps_scene_name_and_retranslates_its_suffix(
     win, _worker, _dirs = _make_window(tmp_path)
     win._on_scene_info({"scene": {"name": "餐厅", "participants": ["甲"]},
                         "characters": [], "backend": "stub"})
-    assert win.windowTitle() == "餐厅 · Ensemble-AI-Studio · 群像"
+    assert win.windowTitle() == "餐厅 · 多智能体角色扮演"
 
     win.apply_language("en")
-    assert win.windowTitle() == "餐厅 · Ensemble-AI-Studio", "场景名不改，只换尾缀"
+    assert win.windowTitle() == "餐厅 · Multi-Agent Roleplay", "场景名不改，只换尾缀"
 
     win.apply_language("zh-Hans")
-    assert win.windowTitle() == "餐厅 · Ensemble-AI-Studio · 群像"
+    assert win.windowTitle() == "餐厅 · 多智能体角色扮演"
 
 
 def test_status_chip_maps_known_status_and_passes_unknown_through(
@@ -1218,12 +1221,18 @@ def test_scene_diag_refreshes_the_scene_card_and_surfaces_diagnostics(qapp, tmp_
         "save_error": None, "implicit_events": []})
 
     assert win._scene_value.text() == "雨夜的茶室", "场景卡应随最新字段刷新"
-    assert win.windowTitle() == "雨夜的茶室 · Ensemble-AI-Studio · 群像"
+    assert win.windowTitle() == "雨夜的茶室 · 多智能体角色扮演"
     assert win._date_value.text() == "2031-07-09", "日期行也应随字段刷新"
     assert "场景工具指令未改动任何字段" in win._log_view.toPlainText(), \
         "诊断应进日志区（此前完全不可见）"
-    assert "场景工具指令未改动任何字段" in win._status_chip.text(), \
-        "新诊断应即时在状态区可见"
+    # §三 改口径：诊断不再抢占顶部状态药丸（那个位置归"进行中/已暂停"这类运行状态），
+    # 改由顶部**诊断区**承载——只在日志面板开着时露头（关着时它整块收起，不占位）。
+    assert "场景工具指令未改动任何字段" in win._scene_diag_text, \
+        "新诊断要即时进诊断区（文本留住，开面板立刻可见）"
+    assert win._scene_diag_area.isHidden(), "日志面板关着 → 诊断区不显示"
+    win._log_btn.setChecked(True)
+    assert not win._scene_diag_area.isHidden()
+    assert "场景工具指令未改动任何字段" in win._scene_diag_label.text()
 
 
 def test_scene_diag_does_not_repeat_the_same_diagnostic(qapp, tmp_path, tmp_store):

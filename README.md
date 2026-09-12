@@ -157,17 +157,30 @@ score = 2.0·repeat + 1.2·stall + 0.5·silence + 1.0·boundary
 
 For depth, see `docs/`:
 
+**Knowledge library.** A character's knowledge persists across scenes. A library is a set of entries (key, title, one-line summary, body); bodies link to each other with `[[key]]`, which makes the library a *graph* rather than a list. The index — titles and summaries — always sits in the prompt as the way in; bodies are fetched on demand by the character itself, through native tool calls (`read_entry` / `remember` / `revise`) issued during the think step, and it may follow links for several hops. A scene runs against a **copy** of the library, so nothing a character learns leaks into who it is until you say so: at the end of the scene each character's gains are offered to you, and you keep or discard them. Merging is newest-wins, and the superseded entry is archived rather than deleted. A library may also be **subscribed** to (a live reference — the source changes, every subscriber sees it at once) or **pinned** (copied into your own library with the reference cut). The old `knowledge_boundary` field on the character card is retired; its lines migrate into the library on first read.
+
+**Relationships.** Every character keeps a table of relations, one row per person: name, gender, closeness (−100..100), a description, and a mode of interaction. The whole table is always in context, because "who is standing in front of me" is needed every time a character opens its mouth — unlike the knowledge index, which is consulted on demand. A character may edit a row through an `update_relation` tool, but only rarely: the tool description, a per-pair per-scene cap and a single-step magnitude cap all encode the same rule, that only a change of the relationship's *nature* counts — a confession, a break, a rescue, a betrayal, not a mood. Closeness enters the bid as one more weighted term.
+
+**Streamed speech.** Lines appear character by character. The display rate is deliberately decoupled from the network: pieces are buffered as they arrive, and typing starts only once the whole line is in, so the pacing is the app's and not the connection's. The line under construction is rendered by the same function as a finished one — there is no separate "typing" style, and nothing shifts when it lands.
+
+**Skipping time.** When nobody has had anything to say for several blocks *and* a sustained activity is under way (sleeping, homework, waiting for dawn), the scene may advance the clock and announce that the activity finished. Four gates keep it in check: a deterministic precondition evaluated engine-side (the model may propose, the engine disposes), a cap on how far a single jump may go, a cooldown, and a per-scene quota.
+
+For depth, see `docs/`:
+
 - `docs/design.md` — the design basis: principles, the three loops, schemas, the bidding model, the information boundary.
 - `docs/technical-scheme.md` — how the design maps onto a LangGraph implementation.
 - `docs/ui-and-scene-freedom.md` — runtime casting, the narration controls, truncating retraction.
+- `docs/information-library.md` — the knowledge library: the graph, the tool loop, scene copies, settlement, subscriptions.
+- `docs/relations-and-scene-pacing.md` — streamed speech, time skips, cast-change reasons, the relationship system.
 - `docs/implementation-plan.md` — the milestone-by-milestone build log.
+- `docs/packaging.md` — the packaging and distribution plan (not implemented yet).
 - `docs/操作手册.md` — the end-user manual, from install to a finished scene.
 
 These documents are currently Chinese only.
 
 ## Authoring characters and scenes
 
-Characters and scenes are authored as Markdown, filled in by any LLM, then parsed into the library. Three steps:
+Characters, scenes and knowledge libraries are authored as Markdown, filled in by any LLM, then parsed into the library. Three template types ship in `templates/`: `角色卡模板.md`, `场景卡模板.md` and `信息库模板.md` (a library: its name, whether it is a character's or a shared world library, and any number of entries with a title, a one-line summary and a body that may link to other entries). Three steps:
 
 **1. Hand the template and your material to a model.** Copy the full text of `templates/角色卡模板.md` (character) or `templates/场景卡模板.md` (scene), paste it with your source material, and add one instruction:
 

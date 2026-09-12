@@ -130,6 +130,41 @@ def test_virtualclock_rate_change_preserves_current_time():
     assert c.current() == 77414, "调速后 1s×4 = 77414（时间被保留且以新率前进）"
 
 
+def test_virtualclock_advance_jumps_forward_without_losing_elapsed_time():
+    """跳时间（§4.3）：整段前推 seconds，**不丢已走时间、不改流速、不改变走/停状态**。
+
+    跳完还得照原节奏接着走——"时间过去了"与"重新起表"是两回事（worker 派发场景跳时间行
+    时正是走这一条，见 test_gui_time_skip.py）。
+    """
+    fake = _FakeMonotonic()
+    c = VirtualClock(77400, rate=30.0, monotonic=fake)
+    c.start()
+    fake.advance(2.0)                  # 走 60 虚拟秒 → 77460
+    c.advance(1800)                    # 跳 30 分钟
+    assert c.current() == 77460 + 1800
+    assert c.rate == 30.0 and c.is_running(), "流速与走表状态都不变"
+    fake.advance(1.0)
+    assert c.current() == 77460 + 1800 + 30, "跳完照原流速继续走"
+
+
+def test_virtualclock_advance_keeps_a_paused_clock_paused():
+    """暂停（冻结）中的钟被前推后**仍然是暂停的**：跳时间不偷偷把表走起来。"""
+    fake = _FakeMonotonic()
+    c = VirtualClock(77400, rate=1.0, monotonic=fake)
+    assert c.is_running() is False
+    c.advance(3600)
+    assert c.current() == 77400 + 3600 and c.is_running() is False
+    fake.advance(5.0)
+    assert c.current() == 77400 + 3600, "冻结中：前推之后依旧不动"
+
+
+def test_virtualclock_advance_crosses_midnight():
+    """前推可以跨午夜（「等天亮」一类）：秒数照加，展示层回卷。"""
+    c = VirtualClock(parse_hhmm("23:30"))
+    c.advance(8 * 3600)
+    assert format_clock(c.current()) == "07:30:00"
+
+
 # ------------------------------------------------------------------ 引擎契约
 async def test_engine_exposes_seconds_and_properties(tmp_path):
     scene_p, a_p, b_p, models_p = _scene_files(tmp_path)

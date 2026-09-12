@@ -788,7 +788,7 @@ def test_activity_default_is_identity_for_nudge_params(tmp_path):
 # 5. 时间条件闸门（引擎确定性校验）
 # ===========================================================================
 # 实况 bug（本节的锁）：场景 阅览室 的钩子 h3/h3-2 条件是「虚拟钟走到 21:30」
-# → 戊/丁离场。用户在 ~19:03 加人，两人**立刻走了**——提前 2.5 小时。根因：
+# → 丙/丁离场。用户在 ~19:03 加人，两人**立刻走了**——提前 2.5 小时。根因：
 # 钩子条件只由场景 LLM 判（引擎给 `_fire_hooks(hook_ids)` 什么就执行什么），引擎把当
 # 前钟点喂进提示词（【当前时刻】）却从不自己校验时间条件，模型误判即照执行。
 # 修法：执行前用 scenarist.time_condition_target 做一次确定性校验——条件明确在说
@@ -799,28 +799,28 @@ _CLOCK_2130 = 21 * 3600 + 30 * 60       # 21:30：条件真正到点
 
 _LEAVE_HOOKS = [
     {"id": "h3", "condition": "虚拟钟走到 21:30", "event_kind": "character",
-     "character_name": "戊", "action": "remove", "visible": True},
+     "character_name": "丙", "action": "remove", "visible": True},
     {"id": "h3-2", "condition": "虚拟钟走到 21:30", "event_kind": "character",
      "character_name": "丁", "action": "remove", "visible": True},
 ]
-_ASK_HOOK = {"id": "h5", "condition": "有人问起丙的过去", "event_kind": "context",
-             "context_text": "丙沉默了一下。", "visible": True}
+_ASK_HOOK = {"id": "h5", "condition": "有人问起戊的过去", "event_kind": "context",
+             "context_text": "戊沉默了一下。", "visible": True}
 
 
 def _write_time_scene(tmp_path: Path, *, hooks: list[dict],
                       start_time: str = "19:00") -> Path:
     """阅览室 的最小等价场景：两名在场角色 + 时间条件钩子 + 19:00 开场。"""
     scene = {
-        "name": "阅览室", "participants": ["戊", "丁"],
-        "background": "封闭管理的寄宿中学，未经允许不能出校。",
-        "description": "一间阅览室，四张桌椅围在一起。",
+        "name": "阅览室", "participants": ["丙", "丁"],
+        "background": "封闭管理的寄宿学校，未经允许不能出校。",
+        "description": "一间自习室，四张桌椅围在一起。",
         "description_mutable": False, "plot_direction": "",
         "hooks": list(hooks), "start_time": start_time,
         "hard_boundary": {"type": "time", "value": "22:30", "desc": "熄灯"},
     }
     scene_p = tmp_path / "阅览室.json"
     scene_p.write_text(json.dumps(scene, ensure_ascii=False), encoding="utf-8")
-    for name in ("戊", "丁"):
+    for name in ("丙", "丁"):
         (tmp_path / f"{name}.json").write_text(
             json.dumps({"name": name, "personality": {"描述": name}},
                        ensure_ascii=False), encoding="utf-8")
@@ -837,7 +837,7 @@ def _write_time_scene(tmp_path: Path, *, hooks: list[dict],
 def _time_engine(tmp_path: Path, sub: str = "t", *, hooks=None, narrate_lines=None,
                  **kw) -> SceneEngine:
     scene_p = _write_time_scene(tmp_path, hooks=hooks or [])
-    eng = SceneEngine(scene_p, [tmp_path / "戊.json", tmp_path / "丁.json"],
+    eng = SceneEngine(scene_p, [tmp_path / "丙.json", tmp_path / "丁.json"],
                       tmp_path / "models.yaml", run_root=tmp_path / sub,
                       bid_path=tmp_path / "bid.yaml", **kw)
     eng.think_backend = StubBackend(json_script=[_urge(2.0)] * 60)
@@ -863,7 +863,7 @@ async def test_time_hook_does_not_fire_before_its_clock(tmp_path):
     await eng.step(1)
 
     cast = eng.cast_state()
-    assert cast["active"] == ["戊", "丁"], "没到点，谁都不许走"
+    assert cast["active"] == ["丙", "丁"], "没到点，谁都不许走"
     assert cast["inactive"] == []
     msgs = await eng.messages()
     assert _exit_lines(msgs) == [], "提前离场的播报行绝不能落"
@@ -874,10 +874,10 @@ async def test_time_hook_does_not_fire_before_its_clock(tmp_path):
     eng.set_clock_now(_CLOCK_2130)          # 钟真的走到 21:30
     await eng.step(1)
     cast = eng.cast_state()
-    assert cast["active"] == [] and set(cast["inactive"]) == {"戊", "丁"}, \
+    assert cast["active"] == [] and set(cast["inactive"]) == {"丙", "丁"}, \
         "到点后照常离场（闸门只拦提前）"
     msgs = await eng.messages()
-    assert sorted(_exit_lines(msgs)) == sorted(["（戊离开了场景。）", "（丁离开了场景。）"])
+    assert sorted(_exit_lines(msgs)) == sorted(["（丙离开了场景。）", "（丁离开了场景。）"])
     assert eng.scene_state()["hook_error"] is None, "到点执行不该留下诊断"
 
 
@@ -898,7 +898,7 @@ async def test_non_time_hook_fires_regardless_of_the_clock(tmp_path):
     eng.set_clock_now(_CLOCK_1903)
     await eng.open_scene()
     await eng.step(1)
-    assert len(_contains(await eng.messages(), "丙沉默了一下。")) == 1
+    assert len(_contains(await eng.messages(), "戊沉默了一下。")) == 1
     assert eng.scene_state()["hook_error"] is None
 
 
@@ -936,12 +936,12 @@ async def test_manual_narrate_now_uses_the_same_time_gate(tmp_path):
     eng.set_clock_now(_CLOCK_1903)
     await eng.open_scene()
     await eng.narrate_now()
-    assert "戊" in eng.cast_state()["active"]
+    assert "丙" in eng.cast_state()["active"]
     assert "未到点" in (eng.scene_state()["hook_error"] or "")
 
     eng.set_clock_now(_CLOCK_2130)
     await eng.narrate_now()
-    assert "戊" not in eng.cast_state()["active"], "到点后手动推进照常执行"
+    assert "丙" not in eng.cast_state()["active"], "到点后手动推进照常执行"
 
 
 async def test_scene_prompt_states_the_time_condition_contract(tmp_path):

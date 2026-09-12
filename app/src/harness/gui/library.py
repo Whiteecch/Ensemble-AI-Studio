@@ -1,7 +1,8 @@
 """应用内编辑器与场景库：角色卡编辑器 + 场景编辑器 + 场景库（多语言 §7）。
 
 五个对话框（只被 gui 包内 app.py / main_window.py 调用，不反向依赖它们）：
-  CharacterEditorDialog  编辑一张角色卡（含语料 corpus：出处/风格/思维/口头禅/样例）
+  CharacterEditorDialog  编辑一张角色卡（含语料 corpus：出处/风格/思维/口头禅/样例，
+                         以及**订阅信息库**区 §8.2：勾选订阅 + 借入条目固化）
   SceneEditorDialog      编辑一个场景（基本信息/背景与设定/出场角色/hooks/硬边界）
   HookEditorDialog       「场景编辑器」里编辑一条 hook（条件/事件类型/分类字段/显隐）
   LibraryDialog          **场景库**（§3.3）：只列场景——打开/新建/编辑/复制/删除/导入
@@ -10,6 +11,10 @@
 
 开场设置小窗已随 §3.3 删除——启动直达主界面，场景由空状态页 /「场景」菜单自己挑，
 故本模块不再有「开场选择器」。
+
+第三个编辑器（**信息库编辑器**，§8.1）不在本模块：它在 `gui/knowledge_editor.py`。本模块
+只在角色编辑器的订阅区用到它（延迟 import，见 `CharacterEditorDialog._knowledge_editor`）
+——库根、订阅读写、条目表行模型都在那边一处实现，这里不复制第二份。
 
 「场景库」里**不再选角色**（§3.3 摒弃两列库）：初始阵容只在场景编辑器的候选列表里
 勾，之后增删走顶栏「角色」菜单（main_window 的角色管理弹窗）。角色卡的编辑/新建仍由
@@ -197,6 +202,9 @@ HOOK_ACTIONS = [("加入", "add"), ("离场", "remove"), ("静默 N 轮", "mute_
 _CAST_LIST_ROWS = 6
 _CAST_LIST_ROW_PX = 24
 _CAST_LIST_PAD_PX = 8
+
+#: 订阅区两张表的定高（订阅库 / 借入条目）：4 行足够看清，角色编辑器本来就长。
+_SUB_LIST_ROWS = 4
 
 #: HH:MM（两位零填充、00:00~23:59）——编辑器写盘用的严格口径（引擎 parse_hhmm 更宽松，
 #: 手工改过的旧文件不该被我们的守门拦下，见 validate_materials）。
@@ -427,10 +435,24 @@ def _template_error_text(exc: TemplateError) -> str:
     return (" ".join(where) + "：" if where else "") + exc.message
 
 
+#: 导入类型 → 中文名（`template_import.ImportResult.kind` 的全部取值，一个不漏）。
+#: 认不出的类型才回落到「角色卡」——那是老口径的兜底，不是默认值（信息库导入曾因此
+#: 被弹成「已导入角色卡」，见 M4a-2 的遗留缺口）。
+_IMPORT_KIND_KEYS = {
+    "character": "kind.character",
+    "scene": "kind.scene",
+    "library": "kind.library",
+}
+
+
 def import_result_text(result: ImportResult) -> str:
-    """导入结果 → 提示框正文（已导入的对象 + 未填字段 + 解析警告）。"""
+    """导入结果 → 提示框正文（已导入的对象 + 未填字段 + 解析警告）。
+
+    类型文案按 `result.kind` 实取：信息库（`library`）导入要说「信息库」，弹成「角色卡」
+    等于骗用户去角色库里找一个永远不在那里的文件。
+    """
     t = translator()
-    kind = t.t("kind.scene") if result.kind == "scene" else t.t("kind.character")
+    kind = t.t(_IMPORT_KIND_KEYS.get(result.kind, "kind.character"))
     text = t.t("dlg.import_saved", kind=kind, name=result.name,
                path=result.path)
     if result.empty_fields:
@@ -578,21 +600,36 @@ def _scroll_form(inner: QWidget) -> QScrollArea:
 # ====================================================== 角色卡编辑器
 class CharacterEditorDialog(QDialog):
     """编辑一张 CharacterCard：姓名/出处/语料（风格·思维·口头禅·样例）/性格/能力/
-    关系/已知边界/权重 w1..w7/情绪衰减。保存 = 校验姓名非空 → save_character_card(
+    关系/权重 w1..w7/情绪衰减。保存 = 校验姓名非空 → save_character_card(
     characters_dir/姓名.json) → accept()。
+
+    这里**没有**「已知边界」那一栏了（§8.2/§9.1 撤除）："他知道什么"由信息库承担，
+    老卡上那几行读卡时迁进 `knowledge_seed`、库首次创建时播种；那个位置换成「订阅信息库」
+    区（§8.2）。
 
     测试/程序化填充用部件名：name_edit / source_edit / style_edit / thinking_edit /
     quirks_edit / samples_edit / personality_edit / abilities_edit /
-    relationships_edit / boundary_edit / weight_sliders[field] / decay_slider /
-    error_label。
+    relationships_edit / weight_sliders[field] / decay_slider / error_label /
+    subs_list / subs_items / subs_status / borrowed_list / pin_btn。
     """
 
     def __init__(self, card: CharacterCard | None = None,
-                 characters_dir: Path | None = None, parent: QWidget | None = None):
+                 characters_dir: Path | None = None, parent: QWidget | None = None,
+                 *, libraries_root: Path | None = None):
         super().__init__(parent)
         t = translator()
         card = card or CharacterCard(name="")
+        # 读进来时的信息库种子**原样带着走**：保存是 `card.model_dump()` 整份覆盖写，而
+        # 卡文件是那几行"他知道什么"的**唯一落盘副本**（迁移只在内存搬，播种在库首次创建
+        # 时）。若这里不留一份、`build_card()` 只按部件重建一张新卡，用户打开老卡改个错字
+        # 点保存，那几行就被写成空列表——一旦还没跑过那一场（库里没有副本），内容永久消失。
+        self._seed = list(card.knowledge_seed)
         self._characters_dir = Path(characters_dir) if characters_dir else None
+        #: 信息库根（§8.2，可注入）：订阅区的落点与订阅源都从它算。缺省沿用引擎那套
+        #: `parents[3]` 惯例（见 `knowledge_editor.default_libraries_root`）——编辑器与
+        #: 引擎绝不各指一处。测试一律注入 tmp，绝不碰仓库的 app/libraries/。
+        self._libraries_root_override = (Path(libraries_root) if libraries_root
+                                         else None)
         self.saved_path: Path | None = None
         self.setStyleSheet(_dialog_stylesheet())
         self.setWindowTitle(t.t("dlg.character_title", name=card.name) if card.name
@@ -655,11 +692,14 @@ class CharacterEditorDialog(QDialog):
         self.relationships_edit = _text_edit(_join_pairs(card.relationships),
                                              t.t("label.please_relationship"), 2)
         pv.addWidget(self.relationships_edit)
-        pv.addWidget(_label(t.t("field.boundaries"), "sect"))
-        self.boundary_edit = _text_edit(_join_lines(card.knowledge_boundary),
-                                        t.t("label.please_one_per_line"), 2)
-        pv.addWidget(self.boundary_edit)
+        # 「已知边界」编辑区已撤除（§8.2/§9.1）："他知道什么"改由信息库承担，卡上不再有
+        # 这一栏。老卡上的那几行**不会丢**——读卡时迁进 knowledge_seed，保存时原样带回
+        # （见 __init__ 的 self._seed 与 build_card），库首次创建时由
+        # knowledgestore.seed_from_card 播种。它原来的位置交给「订阅信息库」区（§8.2）。
         form.addWidget(prof)
+
+        # ---- 订阅信息库（§8.2）----
+        form.addWidget(self._build_subscriptions_group())
 
         # ---- 权重 ----
         wbox = QGroupBox(t.t("field.weights"))
@@ -701,6 +741,208 @@ class CharacterEditorDialog(QDialog):
         root.addWidget(foot)
         self.name_edit.setFocus()
 
+    # ------------------------------------------------------- 订阅信息库（§8.2）
+    @staticmethod
+    def _knowledge_editor():
+        """取 `knowledge_editor` 模块（**延迟 import**）：两个模块互相引用——本模块给它
+        那套微件助手与译者，它反过来要本模块的对话框去挂订阅区。函数内 import 断了这个
+        环；写成模块级 import 会让"谁先被 import"决定成败，不值得赌。
+        """
+        from . import knowledge_editor
+        return knowledge_editor
+
+    def _libraries_root(self) -> Path:
+        """本对话框看到的信息库根：注入优先，否则沿用引擎那套缺省（§13.3）。"""
+        if self._libraries_root_override is not None:
+            return self._libraries_root_override
+        return self._knowledge_editor().default_libraries_root()
+
+    def _subscription_target_dir(self) -> Path | None:
+        """订阅的落点 = 这个角色的角色库目录；姓名空 / 不可用 → None。
+
+        订阅按角色挂（他订了什么 = 他的索引表里多出哪几组）——故落点由**姓名框**现场
+        换算，姓名一改，订阅区跟着换一个人。没有合法姓名就没有落点，此时不写盘。
+        """
+        ke = self._knowledge_editor()
+        return ke.character_library_dir(self._libraries_root(), self.name_edit.text())
+
+    def _build_subscriptions_group(self) -> QGroupBox:
+        """「订阅信息库」区（§8.2）：勾选要订阅的库 + 借入条目列表（可单独固化）。
+
+        勾选**当场写盘**（`<角色库>/subscriptions.json`，见 knowledge_editor 的说明）：
+        订阅是"这个角色订了什么"，属于库不属这张卡——若等「保存」才落盘，用户取消对话框
+        就白勾了，而卡文件那边也本就不该多出这个字段（§9.2 的字段清单不动）。
+        """
+        t = translator()
+        box = QGroupBox(t.t("grp.subscriptions"))
+        v = QVBoxLayout(box)
+        v.setSpacing(6)
+        v.addWidget(_label(t.t("hint.subscriptions")))
+        self.subs_list = QListWidget()
+        self.subs_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.subs_list.setFixedHeight(
+            _SUB_LIST_ROWS * _CAST_LIST_ROW_PX + _CAST_LIST_PAD_PX)
+        self.subs_list.itemChanged.connect(self._on_subscription_toggled)
+        #: 库路径（str）→ 那一行的勾选项（测试与刷新都按路径定位）。
+        self.subs_items: dict[str, QListWidgetItem] = {}
+        v.addWidget(self.subs_list)
+
+        self.borrowed_list = QListWidget()
+        self.borrowed_list.setSelectionMode(
+            QAbstractItemView.SelectionMode.SingleSelection)
+        self.borrowed_list.setFixedHeight(
+            _SUB_LIST_ROWS * _CAST_LIST_ROW_PX + _CAST_LIST_PAD_PX)
+        self.borrowed_list.itemSelectionChanged.connect(self._refresh_pin_btn)
+        v.addWidget(self.borrowed_list)
+
+        self.pin_btn = _ghost(t.t("btn.pin"))
+        self.pin_btn.setEnabled(False)
+        self.pin_btn.clicked.connect(self.pin_selected)
+        pin_row = QHBoxLayout()
+        pin_row.setSpacing(6)
+        pin_row.addWidget(self.pin_btn)
+        pin_row.addStretch(1)
+        v.addLayout(pin_row)
+
+        self.subs_status = QLabel("")
+        self.subs_status.setObjectName("hint")
+        self.subs_status.setWordWrap(True)
+        v.addWidget(self.subs_status)
+
+        #: 借入条目的 (源库目录, 键) ——固化时要拿这对去 `knowledgestore.pin_entry`。
+        self._borrowed_refs: list[tuple[Path, str]] = []
+        #: 当前订阅落点（姓名换人时它变，变了才重绘整张表——免得每敲一个字都重扫一遍库）。
+        self._subs_target: Path | None = None
+        self.refresh_subscriptions()
+        self.name_edit.textChanged.connect(self._on_name_changed_subs)
+        return box
+
+    def refresh_subscriptions(self) -> None:
+        """重扫库根与本角色的订阅：勾选态、借入条目列表、状态行一并刷新。
+
+        扫描一律经 `knowledge_editor`（库根/订阅读写的唯一实现），本模块不碰磁盘。
+        """
+        ke = self._knowledge_editor()
+        t = translator()
+        root = self._libraries_root()
+        target = self._subscription_target_dir()
+        self._subs_target = target
+        self._subs_root = root
+        subs = ke.load_subscriptions(target, root=root) if target else []
+        subscribed = {s.rel for s in subs}
+        infos = ke.list_libraries(root)
+        if target is not None:          # 自己的库不列：订阅自己只会让索引多一份重复
+            infos = [i for i in infos if str(i.path) != str(target)]
+
+        self.subs_list.blockSignals(True)
+        self.subs_list.clear()
+        self.subs_items.clear()
+        for info in infos:
+            item = QListWidgetItem(info.label(t))
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if info.rel in subscribed
+                               else Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, str(info.path))
+            item.setToolTip(str(info.path))
+            self.subs_list.addItem(item)
+            self.subs_items[str(info.path)] = item
+        if not infos:
+            placeholder = QListWidgetItem(t.t("label.subs_none"))
+            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.subs_list.addItem(placeholder)
+        self.subs_list.blockSignals(False)
+
+        self.refresh_borrowed()
+        self.subs_status.setText("" if target is not None else t.t("label.subs_need_name"))
+
+    def refresh_borrowed(self) -> None:
+        """重画借入条目列表（订阅没落点 → 空表 + 一句说明，不留一个空框）。"""
+        ke = self._knowledge_editor()
+        t = translator()
+        target = self._subs_target
+        self.borrowed_list.clear()
+        self._borrowed_refs = []
+        subs = ke.load_subscriptions(target, root=self._subs_root) if target else []
+        for name, source_dir, entries in ke.borrowed_entries(subs):
+            for entry in entries:
+                item = QListWidgetItem(f"{entry.title or entry.key} ⇢ {name}")
+                item.setToolTip(t.t("tip.borrowed_entry", name=name, path=source_dir))
+                self.borrowed_list.addItem(item)
+                self._borrowed_refs.append((source_dir, entry.key))
+        if not self._borrowed_refs:
+            placeholder = QListWidgetItem(t.t("label.subs_no_borrowed"))
+            placeholder.setFlags(Qt.ItemFlag.NoItemFlags)
+            self.borrowed_list.addItem(placeholder)
+        self._refresh_pin_btn()
+
+    def _refresh_pin_btn(self) -> None:
+        """选中一条借入条目才谈得上固化。"""
+        self.pin_btn.setEnabled(self.borrowed_list.currentRow() in
+                                range(len(self._borrowed_refs)))
+
+    def _on_name_changed_subs(self, _text: str) -> None:
+        """姓名改了 → 换人：订阅区整张表重扫（订阅是**按角色**挂的）。
+
+        只在落点真的变了才重扫：每敲一个字都重读一遍库纯属浪费，还会把用户刚勾上的
+        勾选态刷掉。
+        """
+        if self._subscription_target_dir() != self._subs_target:
+            self.refresh_subscriptions()
+
+    def _revert_check(self, item: QListWidgetItem, checked: bool) -> None:
+        """把一行勾选态拨回原样（写盘失败或没有落点时），**不再触发**自己的信号。"""
+        self.subs_list.blockSignals(True)
+        item.setCheckState(Qt.CheckState.Checked if checked
+                           else Qt.CheckState.Unchecked)
+        self.subs_list.blockSignals(False)
+
+    def _on_subscription_toggled(self, item: QListWidgetItem) -> None:
+        """勾/取消勾一个库 → 当场写进该角色的订阅文件；写不成就把勾拨回去并说明。"""
+        ke = self._knowledge_editor()
+        t = translator()
+        want = item.checkState() == Qt.CheckState.Checked
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if data is None:                    # 占位行（不可勾），不该走到这里
+            return
+        target = self._subs_target
+        if target is None:
+            self._revert_check(item, not want)
+            self.subs_status.setText(t.t("label.subs_need_name"))
+            return
+        try:
+            ke.set_subscription(target, Path(str(data)), root=self._subs_root,
+                                subscribed=want)
+        except (OSError, ValueError) as exc:
+            self._revert_check(item, not want)
+            self.subs_status.setText(t.t("err.subscriptions_failed", exc=exc))
+            return
+        self.subs_status.setText("")
+        self.refresh_borrowed()
+
+    def pin_selected(self) -> bool:
+        """固化选中的借入条目（§3.4）：拷成本角色自己的条目，此后源库再改它也不动。
+
+        成功返回 True，并重扫订阅区——固化进来的那条现在同时出现在「自己的条目」里
+        （下一步就能在信息库编辑器里改它）。
+        """
+        ke = self._knowledge_editor()
+        t = translator()
+        row = self.borrowed_list.currentRow()
+        target = self._subs_target
+        if target is None or row not in range(len(self._borrowed_refs)):
+            return False
+        source_dir, key = self._borrowed_refs[row]
+        try:
+            pinned = ke.pin_entry(source_dir, key, target)
+        except (KeyError, OSError, ValueError) as exc:
+            self.subs_status.setText(t.t("err.pin_failed", exc=exc))
+            return False
+        # 状态行**刷新之后**再写：refresh_subscriptions 会把状态行清空，先写等于没写
+        # （用户看不到"刚发生了什么"，包括"为什么没固化"）。
+        self.refresh_subscriptions()
+        self.subs_status.setText(t.t("status.pinned", title=pinned.title or pinned.key))
+        return True
+
     # ---------------------------------------------------------------- 部件
     @staticmethod
     def _weight_row(v: QVBoxLayout, label: str, value: float) -> tuple[QSlider, QLabel]:
@@ -731,13 +973,19 @@ class CharacterEditorDialog(QDialog):
 
     # ---------------------------------------------------------------- 组装
     def build_card(self) -> CharacterCard:
-        """按部件当前值组装 CharacterCard（滑杆 0~100 → 权重 0~1）。"""
+        """按部件当前值组装 CharacterCard（滑杆 0~100 → 权重 0~1）。
+
+        `knowledge_seed` **不是**从部件来的（那一栏已撤除，§8.2/§9.1），而是把读进来时
+        的那一份原样带回去——保存不得成为老卡边界内容的删除键，见 `__init__` 里的说明。
+        """
         return CharacterCard(
             name=self.name_edit.text().strip(),
             personality=_pairs(self.personality_edit.toPlainText()),
             abilities=_lines(self.abilities_edit.toPlainText()),
             relationships=_pairs(self.relationships_edit.toPlainText()),
-            knowledge_boundary=_lines(self.boundary_edit.toPlainText()),
+            # 老卡那几行原样写回（内容一字不改、顺序不变）；播种时才由 knowledgestore
+            # 拆条进库。它留在卡上无害：库已存在则整段跳过（幂等）。
+            knowledge_seed=list(self._seed),
             weights=Weights(**{f: self.weight_sliders[f].value() / 100.0
                                for f, _ in WEIGHT_FIELDS}),
             emotion_decay_rate=self.decay_slider.value() / 100.0,
@@ -1244,7 +1492,7 @@ class HookEditorDialog(QDialog):
     报错、不关窗——「条件为空」「角色事件没填角色名」这类问题在编辑器里就拦住。
 
     程序化填充用：condition_edit / kind_combo / context_edit / character_combo /
-    action_combo / turns_spin / patch_edit / visible_check / enabled_check /
+    action_combo / turns_spin / reason_edit / patch_edit / visible_check / enabled_check /
     note_edit / error_label。
     """
 
@@ -1332,7 +1580,7 @@ class HookEditorDialog(QDialog):
         return page
 
     def _character_page(self, hook: Hook, cast: list[str]) -> QWidget:
-        """角色事件：角色 + 动作（+ 静默轮数）。"""
+        """角色事件：角色 + 动作（+ 静默轮数 + 进离场原因）。"""
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -1356,6 +1604,12 @@ class HookEditorDialog(QDialog):
         self.turns_spin.setRange(0, 999)
         self.turns_spin.setValue(int(hook.turns or 0))
         lay.addWidget(self.turns_spin)
+        # 进离场原因（§5.1）：留空 = 今天的行为（引擎一个字都不落、也不多一次调用）。
+        # 它只交给当事人自己（§5.2），所以这里的说明必须讲清"别人看不到"。
+        lay.addWidget(_label(_t("field.hook_reason"), "sect"))
+        self.reason_edit = QLineEdit(hook.reason or "")
+        self.reason_edit.setPlaceholderText(_t("label.please_reason"))
+        lay.addWidget(self.reason_edit)
         self._on_action_changed()
         self.action_combo.currentIndexChanged.connect(
             lambda _i: self._on_action_changed())
@@ -1375,8 +1629,14 @@ class HookEditorDialog(QDialog):
         return page
 
     def _on_action_changed(self) -> None:
-        """只有「静默 N 轮」才轮到轮数框。"""
-        self.turns_spin.setEnabled(self.action_combo.currentData() == "mute_turns")
+        """只有「静默 N 轮」才轮到轮数框；只有「加入/离场」才轮到原因框。
+
+        禁用只是"这一栏跟这个动作无关"的提示，**不清内容**：用户在两种动作之间来回切
+        不该丢掉已经写好的东西（照旧按部件当前值组装，见 `build_hook`）。
+        """
+        action = self.action_combo.currentData()
+        self.turns_spin.setEnabled(action == "mute_turns")
+        self.reason_edit.setEnabled(action in ("add", "remove"))
 
     # ---------------------------------------------------------------- 组装/保存
     def build_hook(self) -> Hook:
@@ -1390,6 +1650,7 @@ class HookEditorDialog(QDialog):
             character_name=self.character_combo.currentText().strip(),
             action=self.action_combo.currentData(),
             turns=self.turns_spin.value(),
+            reason=self.reason_edit.text().strip(),
             scene_patch=scene_patch_pairs(self.patch_edit.toPlainText()),
             enabled=self.enabled_check.isChecked(),
             note=self.note_edit.text().strip())
@@ -1432,13 +1693,20 @@ class LibraryDialog(QDialog):
     """
 
     def __init__(self, characters_dir: Path | None, scenes_dir: Path,
-                 parent: QWidget | None = None):
+                 parent: QWidget | None = None,
+                 *, libraries_root: Path | None = None):
         super().__init__(parent)
         t = translator()
         #: 角色库目录：本弹窗**不列角色**，但「从模板导入…」要它决定角色卡落在哪，
         #: 场景编辑器要它列候选角色卡。旧调用方照传（可为 None：退回到场景目录的兄弟目录）。
         self._characters_dir = Path(characters_dir) if characters_dir else None
         self._scenes_dir = Path(scenes_dir)
+        #: 信息库根（§8.2/§13.3，可注入）：只喂给「从模板导入…」——信息库模板要知道往
+        #: 哪座根下写。缺省按**素材布局**推导（`characters/` 的兄弟 `libraries/`），
+        #: 与 `template_import.import_template_file` 自己的缺省同源，故旧调用方一字不改
+        #: 也拿得到正确落点；桌面端由主窗口显式传它自己那份库根。
+        self._libraries_root_override = (Path(libraries_root) if libraries_root
+                                         else None)
         self.chosen_scene: Path | None = None
         #: 兼容旧调用方（main_window 的旧写法会读它）：场景库不再选角色，**恒为空表**。
         self.chosen_characters: list[Path] = []
@@ -1548,14 +1816,22 @@ class LibraryDialog(QDialog):
         """角色库目录（导入角色模板时的落盘处）；没给就退到场景目录的兄弟目录。"""
         return self._characters_dir or (self._scenes_dir.parent / "characters")
 
+    def _libraries_root(self) -> Path:
+        """信息库根（导入信息库模板时的落盘处，§13.3）：注入优先，否则按素材布局推导。"""
+        return self._libraries_root_override or (
+            self._characters_root().parent / "libraries")
+
     # ---------------------------------------------------------------- 模板导入
     def import_from_template(self) -> None:
         """「从模板导入…」：挑一个按 templates/ 填好的 .md → 解析入库 → 刷新场景列。
 
-        角色卡 / 场景卡由**文件内容**自动判定（template_import.detect_kind），落盘路径与
-        覆盖守门也由它负责；失败只弹一句中文说明（带行号与字段名），绝不把 traceback
-        丢到界面上。导入的是场景就把新文件选中，用户直接就能「用这套开场」；导入的是
-        角色卡则只刷新（角色列表在「角色」菜单那一侧，本弹窗不列角色）。
+        角色卡 / 场景卡 / 信息库由**文件内容**自动判定（template_import.detect_kind），
+        落盘路径与覆盖守门也由它负责；失败只弹一句中文说明（带行号与字段名），绝不把
+        traceback 丢到界面上。导入的是场景就把新文件选中，用户直接就能「用这套开场」；
+        导入的是角色卡则只刷新（角色列表在「角色」菜单那一侧，本弹窗不列角色）。
+
+        三个目录都要给全：信息库模板缺 `libraries_dir` 会按 `characters_dir` 的兄弟推导，
+        那在"素材目录不在仓库内"的布局下就指错了地方（§13.3 的库根只有一个）。
         """
         t = translator()
         filename, _selected_filter = QFileDialog.getOpenFileName(
@@ -1566,7 +1842,7 @@ class LibraryDialog(QDialog):
         try:
             result = import_template_file(
                 Path(filename), characters_dir=self._characters_root(),
-                scenes_dir=self._scenes_dir)
+                scenes_dir=self._scenes_dir, libraries_dir=self._libraries_root())
         except TemplateError as exc:
             warn(self, t.t("dlg.import_failed"), _template_error_text(exc))
             return

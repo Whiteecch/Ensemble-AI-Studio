@@ -123,7 +123,7 @@ def test_engine_init_rejects_participant_without_card(tmp_path: Path):
     """I4(最终评审)：场景参与者缺角色卡 → 构图前 fail fast。"""
     scene_p, a_p, b_p, models_p = _write(tmp_path)
     (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["丁", "戊", "己"]},
+        "name": "餐厅", "participants": ["丁", "戊", "庚"]},
         ensure_ascii=False), encoding="utf-8")
     with pytest.raises(ValueError, match="缺少角色卡"):
         SceneEngine(scene_p, [a_p, b_p], models_p, run_root=tmp_path / "runs")
@@ -148,7 +148,7 @@ def test_engine_open_scene_accepts_custom_opening(tmp_path: Path):
     eng2 = SceneEngine(scene_p, [a_p, b_p], models_p, run_root=tmp_path / "runs2")
     asyncio.run(eng2.open_scene())                        # 缺省
     msgs2 = asyncio.run(eng2.messages())
-    assert msgs2[0]["content"] == "夜色渐深，两人对坐。"
+    assert msgs2[0]["content"] == "夜晚的餐厅，二人临窗而坐。"
 
 
 def _urge_entry(urge: float) -> dict:

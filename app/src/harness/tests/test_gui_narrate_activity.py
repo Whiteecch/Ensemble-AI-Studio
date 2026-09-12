@@ -130,8 +130,8 @@ def _window(tmp_path: Path, worker=None, *, settings: AppSettings | None = None,
     if saved is not None:
         store.save(saved)
     worker = worker if worker is not None else _FakeWorker()
-    cfg = AppConfig(scene=Path("scenes/餐厅.json"),
-                    characters=[Path("characters/甲.json")],
+    cfg = AppConfig(scene=Path("scenes/贝克街221B.json"),
+                    characters=[Path("characters/福尔摩斯.json")],
                     models=Path("config/models.yaml"), bid=Path("config/bid.yaml"),
                     run_root=tmp_path / "runs", live=False, api_key=None,
                     opening="入夜。")

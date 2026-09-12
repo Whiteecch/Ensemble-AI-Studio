@@ -44,7 +44,8 @@ def test_defaults():
 def test_to_dict_from_dict_round_trip():
     s = AppSettings(api_base_url="https://api.deepseek.com", api_key="sk-x",
                     model_name="deepseek-v4-flash", theme="深色",
-                    language="ja", autosave_every=50, narrate_activity=0.8)
+                    language="ja", autosave_every=50, narrate_activity=0.8,
+                    knowledge_enabled=False, stream_speak=False)
     d = s.to_dict()
     assert d == {
         "api_base_url": "https://api.deepseek.com",
@@ -54,6 +55,10 @@ def test_to_dict_from_dict_round_trip():
         "language": "ja",
         "autosave_every": 50,
         "narrate_activity": 0.8,
+        "knowledge_enabled": False,
+        # 流式开口（§二．8）：产品缺省=开，但**存过什么就原样带出来**（新增字段必须进
+        # 白名单，否则用户关掉的值会在下一次 update 时被静默丢弃）
+        "stream_speak": False,
     }
     assert AppSettings.from_dict(d) == s
     # to_dict 返回的是快照（改它不影响原对象）
@@ -192,6 +197,63 @@ def test_update_persists_narrate_activity_and_snaps_out_of_range(tmp_path):
     assert store.update(narrate_activity=0.83).narrate_activity == 0.8
     assert json.loads(p.read_text(encoding="utf-8"))["narrate_activity"] == 0.8
     assert store.update(narrate_activity="乱写").narrate_activity == 0.5
+
+
+# ------------------------------------------ 信息库检索 开/关（§10.2） ---------- --
+
+def test_knowledge_switch_defaults_to_on():
+    """「信息库检索」缺省**开**（§10.2）：不给任何设置时就是今天的新行为（有库就查库）。"""
+    from harness.gui.settings import DEFAULT_KNOWLEDGE_ENABLED
+
+    assert DEFAULT_KNOWLEDGE_ENABLED is True
+    assert AppSettings().knowledge_enabled is True
+    assert AppSettings.from_dict({}).knowledge_enabled is True
+
+
+def test_knowledge_switch_is_in_the_field_whitelist(tmp_path):
+    """开关必须**进字段白名单**——不加进去会被 `update` 静默丢弃（§10.2 点名的坑）。
+
+    白名单不是一张手写表，而是 dataclass 的字段集合（`update` 用它过滤 kwargs）。故这里
+    钉两件事：字段在 `fields(AppSettings)` 里，且 `update(knowledge_enabled=False)` 真的
+    落进文件——"界面点了关、下一场照样查库"正是这个坑的症状。
+    """
+    from dataclasses import fields
+
+    from harness.gui.settings import DEFAULT_KNOWLEDGE_ENABLED  # noqa: F401  （存在即可）
+
+    assert "knowledge_enabled" in {f.name for f in fields(AppSettings)}
+
+    p = tmp_path / "settings.json"
+    store = SettingsStore(p)
+    assert store.update(knowledge_enabled=False).knowledge_enabled is False
+    assert store.load().knowledge_enabled is False, "关掉必须能读回来"
+    assert json.loads(p.read_text(encoding="utf-8"))["knowledge_enabled"] is False
+    assert store.update(knowledge_enabled=True).knowledge_enabled is True
+    assert store.load().knowledge_enabled is True
+
+
+@pytest.mark.parametrize("bad,expected", [
+    ("false", False), ("0", False), ("no", False), ("off", False), ("False", False),
+    ("true", True), ("1", True), ("yes", True), ("YES", True),
+    (0, False), (1, True), (False, False), (True, True),
+    ("久了", True), (None, True), ([1], True), (2, True),  # 读不出来 → 默认（开）
+])
+def test_knowledge_switch_accepts_loose_writings_and_falls_back_to_on(bad, expected):
+    """手改 settings.json 是常态：true/false、0/1、yes/no（大小写随意）都认；认不出来按默认（开）。
+
+    与 `knowledgestore._as_bool` 同一套路。**读盘绝不抛**：坏值只回落这一格的默认值。
+    """
+    assert AppSettings.from_dict({"knowledge_enabled": bad}).knowledge_enabled is expected
+
+
+def test_knowledge_switch_bad_value_only_resets_that_field(tmp_path):
+    """一格坏值只回落它自己，其余字段照旧（与其它字段同一纪律）。"""
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps({"api_key": "sk-keep", "knowledge_enabled": "大概吧",
+                             "theme": "深色"}, ensure_ascii=False), encoding="utf-8")
+    s = SettingsStore(p).load()
+    assert s.knowledge_enabled is True
+    assert s.api_key == "sk-keep" and s.theme == "深色"
 
 
 # ------------------------------------------------------ default_settings_path

@@ -32,8 +32,8 @@ def ctx_hook(**kw) -> Hook:
 
 
 def char_hook(**kw) -> Hook:
-    base = dict(id="h-char", condition="甲得知真相", event_kind="character",
-                character_name="甲", action="remove")
+    base = dict(id="h-char", condition="乙得知真相", event_kind="character",
+                character_name="乙", action="remove")
     base.update(kw)
     return Hook(**base)
 
@@ -55,8 +55,8 @@ def pending(name: str, action: str = "remove", turns: int = 0,
 # describe
 # --------------------------------------------------------------------------
 def test_describe_character_remove_matches_spec_example():
-    h = char_hook(condition="甲得知真相", character_name="甲", action="remove")
-    assert describe(h) == "若『甲得知真相』→ 让 甲 离场（显式）"
+    h = char_hook(condition="乙得知真相", character_name="乙", action="remove")
+    assert describe(h) == "若『乙得知真相』→ 让 乙 离场（显式）"
 
 
 def test_describe_character_actions():
@@ -223,8 +223,8 @@ def test_validate_is_pure_and_deterministic():
 # tick
 # --------------------------------------------------------------------------
 def test_tick_fires_when_countdown_reaches_zero():
-    fired, remaining = tick([pending("甲", after=1)], rounds_elapsed=1)
-    assert len(fired) == 1 and fired[0].character_name == "甲"
+    fired, remaining = tick([pending("乙", after=1)], rounds_elapsed=1)
+    assert len(fired) == 1 and fired[0].character_name == "乙"
     assert remaining == []
     # 触发项携带扣减后的值
     assert fired[0].fire_after_rounds == 0
@@ -239,7 +239,7 @@ def test_tick_keeps_waiting_items_in_order():
 
 
 def test_tick_multi_round_elapsed():
-    p = pending("甲", after=3)
+    p = pending("乙", after=3)
     fired, remaining = tick([p], rounds_elapsed=2)
     assert fired == [] and remaining[0].fire_after_rounds == 1
     fired, remaining = tick(remaining, rounds_elapsed=1)
@@ -248,9 +248,9 @@ def test_tick_multi_round_elapsed():
 
 
 def test_tick_overdue_fires_immediately():
-    fired, remaining = tick([pending("甲", after=0), pending("陈默", after=-5)],
+    fired, remaining = tick([pending("乙", after=0), pending("陈默", after=-5)],
                             rounds_elapsed=1)
-    assert [p.character_name for p in fired] == ["甲", "陈默"]
+    assert [p.character_name for p in fired] == ["乙", "陈默"]
     assert remaining == []
 
 
@@ -262,7 +262,7 @@ def test_tick_preserves_order_across_many():
 
 
 def test_tick_default_rounds_elapsed_is_one():
-    fired, remaining = tick([pending("甲", after=1)])
+    fired, remaining = tick([pending("乙", after=1)])
     assert len(fired) == 1 and remaining == []
 
 
@@ -282,12 +282,12 @@ def test_tick_does_not_mutate_inputs():
 
 
 def test_tick_keeps_payload_fields():
-    p = pending("甲", action="mute_turns", turns=3, after=1,
-                notify=["陈默"], notify_text="甲暂时不出声", visible=False)
+    p = pending("乙", action="mute_turns", turns=3, after=1,
+                notify=["陈默"], notify_text="乙暂时不出声", visible=False)
     fired, _ = tick([p], rounds_elapsed=1)
     f = fired[0]
     assert (f.action, f.turns, f.notify, f.notify_text, f.visible) == \
-        ("mute_turns", 3, ["陈默"], "甲暂时不出声", False)
+        ("mute_turns", 3, ["陈默"], "乙暂时不出声", False)
 
 
 def test_tick_is_deterministic():
@@ -394,23 +394,23 @@ def test_prompt_block_empty_inputs():
 def test_prompt_block_lists_conditions_and_effects():
     block = hooks_prompt_block([char_hook(), ctx_hook()], [])
     assert block
-    assert "甲得知真相" in block          # 条件
-    assert "甲" in block and "离场" in block   # 效果
+    assert "乙得知真相" in block          # 条件
+    assert "乙" in block and "离场" in block   # 效果
     assert "清晨的集市刚开张" in block       # context 效果
 
 
 def test_prompt_block_skips_disabled_hooks():
     block = hooks_prompt_block([char_hook(enabled=False)], [])
-    assert "甲得知真相" not in block
+    assert "乙得知真相" not in block
     assert block == ""
 
 
 def test_prompt_block_lists_pending_delayed_actions():
-    block = hooks_prompt_block([], [pending("甲", after=2,
-                                            notify_text="甲两轮后离场")])
-    assert "甲" in block
+    block = hooks_prompt_block([], [pending("乙", after=2,
+                                            notify_text="乙两轮后离场")])
+    assert "乙" in block
     assert "2" in block
-    assert "甲两轮后离场" in block
+    assert "乙两轮后离场" in block
 
 
 def test_prompt_block_pending_only_without_hooks_is_non_empty():
@@ -442,3 +442,57 @@ def test_prompt_block_deterministic_and_pure():
     second = hooks_prompt_block(hooks, ps)
     assert first == second
     assert hooks == h_snapshot and ps == p_snapshot
+
+
+# --------------------------------------------------------------------------
+# 进离场原因（《人际关系与场景推进》§5.1）：原因随动作入队
+# --------------------------------------------------------------------------
+def test_pending_action_reason_defaults_to_empty():
+    """`reason` 缺省空串：老调用方（四个位置参数、不传 reason）逐字段不变。
+
+    这是铁律 3 的最小可证伪形式——老数据/老调用方一律照旧，新字段只多出一个空串。
+    """
+    old = PendingCharacterAction("乙", "remove", 0, 2)
+    assert old.reason == ""
+    assert asdict(old) == {"character_name": "乙", "action": "remove", "turns": 0,
+                           "fire_after_rounds": 2, "notify": [], "notify_text": "",
+                           "visible": True, "reason": ""}
+
+
+def test_tick_keeps_the_reason_attached_to_its_action():
+    """原因随动作一起排队、一起到期：tick 只动倒计时，原因一个字节不动。"""
+    fired, _ = tick([pending("乙", after=1, reason="去见师父")], rounds_elapsed=1)
+    assert fired[0].reason == "去见师父"
+    _, waiting = tick([pending("陈默", after=3, reason="去取药")], rounds_elapsed=1)
+    assert waiting[0].reason == "去取药"
+
+
+def test_hook_reason_is_optional_and_does_not_affect_validity_or_describe():
+    """`Hook.reason`（编辑器里填的进离场原因）缺省空串；它与合法性无关，也不改列表行。
+
+    列表行（describe）只讲「条件 → 效果」，是给作者扫一眼的摘要；原因属于当事人的私事
+    （§5.2），要看得打开这条钩子——把私事铺在列表上只会让每一行都变长。
+    """
+    bare = Hook(id="h", condition="甲要走", event_kind="character",
+                character_name="甲", action="remove")
+    assert bare.reason == ""
+    with_reason = char_hook(reason="去找乙")
+    assert validate(with_reason) == []
+    assert describe(with_reason) == describe(char_hook())
+    assert "去找乙" not in describe(with_reason)
+
+
+def test_prompt_block_never_renders_the_reason():
+    """原因**不进**场景 agent 的钩子清单块（§5.2）：带原因与不带原因逐字节相同。
+
+    钩子块是交给**场景 agent**（叙述者）的——它不是当事人。把一件私密的进离场原因写进
+    去，等于让一个不该看见它的模型读到了它（§5.2：原因只进当事人自己的上下文），而它
+    对"这一轮钩子成不成立"的判断毫无帮助（条件与效果本来就写在块里）。
+    """
+    plain = hooks_prompt_block([], [pending("乙", after=2,
+                                            notify_text="乙两轮后离场")])
+    with_reason = hooks_prompt_block([], [pending("乙", after=2,
+                                                  notify_text="乙两轮后离场",
+                                                  reason="去见师父")])
+    assert with_reason == plain
+    assert "去见师父" not in with_reason

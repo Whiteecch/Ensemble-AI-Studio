@@ -18,25 +18,106 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from typing import Any, Sequence
 
+from . import knowledgestore as store
 from .engine import SceneEngine
+from .loaders import load_character_card
 
 _QUIT_WORDS = {"q", "quit", "exit", "结束", "退出"}
 
+#: 非交互场合的结算默认策略（§7.4：没有用户的场合必须**显式**选一个，并在输出里讲清楚）。
+#: 缺省 `leave` = 什么都不做、留着待结算：这是唯一**不可逆性为零**的选择——"保留"会把
+#: 角色这一场记下的东西永久并进本体，"丢弃"会把它标成永不合并（§7.5 先到先得），
+#: 两个方向都不该由"这里没有用户"替用户决定。
+_SETTLE_DEFAULT = "leave"
+_SETTLE_POLICIES = {
+    "leave": "不结算、留着待你回来处理（什么都没并进本体库，也没被丢掉）",
+    "keep": "保留（本场所得已并进本体库）",
+    "discard": "丢弃（什么都没并进本体库，副本与这一场的存档都留着）",
+}
+_SETTLE_POLICY_CHOICES = tuple(_SETTLE_POLICIES)
+
 # 内置演示素材缺省值：不传 --scene/--characters/--models 也能一条指令跑 demo。
 _DEFAULT_SCENE = Path("scenes/贝克街221B.json")
-_DEFAULT_CHARACTERS = [Path("characters/福尔摩斯.json"),
-                       Path("characters/华生.json")]
+_DEFAULT_CHARACTERS = [Path("characters/福尔摩斯.json"), Path("characters/华生.json")]
 _DEFAULT_MODELS = Path("config/models.yaml")
 _DEFAULT_BID_DEMO = Path("config/bid.demo.yaml")
 
+#: `--libraries-root` 的「关」写法（§13.3）：显式写这几个之一等于**不启用信息库**，
+#: 与今天逐字节一致（一个字都不多打印）。空串也认——它是命令行上最自然的那句"不要"。
+_LIBRARIES_OFF_WORDS = frozenset({"", "none", "off", "no", "false", "-", "关", "无"})
+
+
+def _default_libraries_root() -> Path:
+    """信息库根的缺省落点：**仓库（安装目录）下的 `app/libraries`**（§13.3）。
+
+    与 `gui/app.py` 定位素材用的是**同一套 `parents[3]` 惯例**（`gui/worker.py` 同）。
+    本模块在 `app/src/harness/` 下，故 app 根是 `parents[2]`；那里与 `scenes/`、
+    `characters/` 平级，本期信息库就落在同一层。
+    """
+    return Path(__file__).resolve().parents[2] / "libraries"
+
+
+#: 缺省信息库根（隔离夹具会把它指到临时目录，故测试里不要把"缺省到底是哪儿"钉在这条常量上，
+#: 要钉就钉 `_default_libraries_root()` 的推导）。
+_DEFAULT_LIBRARIES_ROOT = _default_libraries_root()
+
+
+def _resolve_libraries_root(value: str | Path | None) -> Path | None:
+    """`--libraries-root` 的取值 → 路径或 None（None = 这一场不启用信息库）。**纯函数。**
+
+    规则（都写进了 `--help`）：
+      · 不传（None）→ **缺省 `app/libraries`**：信息库检索是常态，缺省开（§10.2/§13.3）；
+      · 传路径 → 就用它（显式传参覆盖缺省）；
+      · 传 `none`/`off`/`-`/空串等「关」的写法 → None，退回今天的行为（逐字节一致）。
+    """
+    if value is None:
+        return _DEFAULT_LIBRARIES_ROOT
+    if isinstance(value, str) and value.strip().casefold() in _LIBRARIES_OFF_WORDS:
+        return None
+    return Path(value)
+
+
+def _seed_card_libraries(paths: Sequence[Path | str] | None,
+                         root: Path | None) -> list[Any]:
+    """把这一场装载的卡上的 `knowledge_seed` 播进各自的角色库（§9.1 第二步）。**绝不抛。**
+
+    与 GUI 侧（`gui/worker._seed_card_libraries`）同一件事、同一套容错：只在库**还不存在**
+    时写入（幂等由 `seed_from_card` 保证）；没有信息库根就什么都不做；读卡失败只记日志并
+    跳过——播种是旁挂动作，绝不该拦住开场（引擎随后还会按需再读一次卡，报错更准确）。
+
+    `SeedResult.warnings`（哪些行被当作重复丢掉、哪些键被改造过）一律**打印到 stderr**：
+    这些是"用户写的东西被动了"的实情，静默丢弃正是 §4.3 明令禁止的那件事。走 stderr 而非
+    stdout——stdout 是要与"没有信息库"逐字节对拍的输出面（§13.3）。
+    """
+    if root is None:
+        return []
+    results: list[Any] = []
+    for path in paths or ():
+        try:
+            card = load_character_card(Path(path))
+        except Exception:                   # 坏卡/缺文件不拦开场，也不吭声
+            continue                        # （引擎随后会再读一次，报出更准确的错）
+        name = getattr(card, "name", "?")
+        try:
+            res = store.seed_character_library(card, root=Path(root))
+        except Exception as exc:            # 磁盘满/权限：旁挂动作只记一行到 stderr
+            print(f"[播种] 「{name}」的信息库没能建起来（这一场照常）：{exc}",
+                  file=sys.stderr)
+            continue
+        for line in getattr(res, "warnings", ()) or ():
+            print(f"[播种] 「{name}」：{line}", file=sys.stderr)
+        results.append(res)
+    return results
+
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Ensemble-AI-Studio 命令行 harness")
+    ap = argparse.ArgumentParser(description="多智能体角色扮演 harness")
     ap.add_argument("--scene", type=Path,
                     help="场景 JSON；缺省内置 scenes/贝克街221B.json")
     ap.add_argument("--characters", type=Path, nargs="+",
-                    help="角色卡 JSON；缺省内置 福尔摩斯.json 华生.json")
+                    help="角色卡 JSON；缺省内置 甲.json 乙.json")
     ap.add_argument("--models", type=Path,
                     help="models.yaml；缺省内置 config/models.yaml")
     ap.add_argument("--bid", type=Path)
@@ -47,6 +128,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help="场景开始时间 HH:MM（缺省取场景 start_time / 21:30）")
     ap.add_argument("--run-root", type=Path, default=None)
     ap.add_argument("--export", type=Path)
+    ap.add_argument("--libraries-root", type=str, default=None,
+                    help="信息库根目录；**缺省 = 仓库/安装目录下的 app/libraries**"
+                         "（信息库检索是常态）。显式传 `none` / `off` / `-` / 空串 "
+                         "= 这一场不启用信息库：整场行为与没有信息库时逐字节一致，"
+                         "也不会打印任何结算相关的东西（§13.3 的老调用方零语感差异）")
+    ap.add_argument("--settle-default", choices=list(_SETTLE_POLICY_CHOICES),
+                    default=_SETTLE_DEFAULT,
+                    help="没有可交互输入的场合（管道 / --stub 自动跑 / 没有 stdin）散场结算按"
+                         f"什么策略处理；缺省 {_SETTLE_DEFAULT}={_SETTLE_POLICIES[_SETTLE_DEFAULT]}")
     # 遗留 --live（无 --demo）：语义不变，逐块静默跑完 N 步后导出。
     ap.add_argument("--live", action="store_true")
     # ---- --demo 流式演示参数 ----
@@ -78,6 +168,134 @@ def _read(prompt: str) -> str:
 
 async def _to_thread_read(prompt: str) -> str:
     return await asyncio.to_thread(_read, prompt)
+
+
+# ------------------------------------------------------- 散场结算（§7.2/§7.4）--
+
+def _stdin_interactive() -> bool:
+    """有没有可交互的输入（stdin 是 TTY）。
+
+    只管"能不能问"，不管"该不该问"：管道重定向、pytest 的假 stdin、没有 stdin 一律 False
+    ——那时绝不 `input()`（一读就卡死或读到 EOF），改走显式默认策略（`--settle-default`）。
+    """
+    try:
+        return bool(sys.stdin and sys.stdin.isatty())
+    except Exception:                  # 假 stdin（测试替身）连 isatty 都没有
+        return False
+
+
+def _ask_settlement(prompt: str) -> str | None:
+    """问一次「保留 / 丢弃」；**EOF / Ctrl-C / 没有可交互输入 → None**（= 不结算、留着）。
+
+    绝不崩：用户中途走了（关掉终端、Ctrl-C）不该把刚看完的一场戏的收尾整段丢掉，
+    也不该替他做一个不可逆的选择——没答的都留在待结算（§7.3）。
+    """
+    if not _stdin_interactive():
+        return None
+    try:
+        return input(prompt)
+    except (EOFError, KeyboardInterrupt):
+        return None
+
+
+def _parse_decision(answer: str) -> str:
+    """用户的回答 → `"keep"` / `"discard"` / `"leave"`（认不出来一律 leave）。
+
+    宁可留着也不猜：并进本体与标记丢弃都是不可逆的（§7.5 先到先得），一个手滑的乱输
+    不该替用户做掉这个决定。空行（直接回车）正是"留着"这个选项本身。
+    """
+    text = str(answer or "").strip().lower()
+    if text in ("k", "keep", "保留", "1"):
+        return "keep"
+    if text in ("d", "discard", "丢弃", "2"):
+        return "discard"
+    return "leave"
+
+
+def _print_settlement_list(engine: SceneEngine) -> None:
+    """把待决清单打出来（§7.2："看得到才决定得了"）：谁、哪一场、新增几条、修订几条、标题。"""
+    print("\n[结算] 这一场结束了。这些人的本场所得等你决定：", flush=True)
+    for name, gain in engine.settlement_gains().items():
+        print(f"  · {name}（{gain.scene or engine.scene.name}）："
+              f"新增 {len(gain.added)} 条、修订 {len(gain.revised)} 条", flush=True)
+        for entry in [*gain.added, *gain.revised]:
+            print(f"      - {entry.title or entry.key}", flush=True)
+    for warning in engine.settlement_warnings():
+        print(f"  （警告）{warning}", flush=True)
+
+
+def _collect_decisions(args: argparse.Namespace, names: list[str]) -> dict[str, str]:
+    """拿到每个角色的决定（§7.4）：交互则逐个问，非交互则走显式默认策略并**讲清楚**。"""
+    if not _stdin_interactive():
+        policy = str(getattr(args, "settle_default", None) or _SETTLE_DEFAULT)
+        print(f"[结算] 没有可交互的输入（管道 / 自动跑 / 没有 stdin）：按默认策略"
+              f"「{policy}」处理——{_SETTLE_POLICIES.get(policy, '不结算、留着')}。",
+              flush=True)
+        if policy not in ("keep", "discard"):     # 认不出来（缺参/坏值）→ 当"留着"
+            return {}
+        return {name: policy for name in names}
+    decisions: dict[str, str] = {}
+    for name in names:
+        answer = _ask_settlement(f"{name}：保留 / 丢弃（回车=留着，稍后再结）> ")
+        if answer is None:
+            print("[结算] 输入结束（EOF / 中断）：没答的都没结算，留着待你回来处理。",
+                  flush=True)
+            break
+        choice = _parse_decision(answer)
+        if choice == "leave":
+            print(f"  {name}：留着，不结算。", flush=True)
+            continue
+        decisions[name] = choice
+    return decisions
+
+
+def _print_reports(reports: dict) -> None:
+    """把每个角色**实际发生了什么**打出来（§7.4：不静默）；警告逐条上屏。"""
+    for name, report in reports.items():
+        if report.outcome == "keep":
+            merged = report.merged
+            print(f"  {name}：保留 —— 并入本体库：新增 {merged.added} 条、"
+                  f"修订 {merged.revised} 条、归档 {merged.archived} 条、"
+                  f"跳过 {merged.skipped} 条。", flush=True)
+        elif report.outcome == "discard":
+            print(f"  {name}：丢弃 —— {report.discarded} 条没有并进本体库，"
+                  f"副本与这一场的存档都留着。", flush=True)
+        else:
+            print(f"  {name}：没有结算（留在待结算）。", flush=True)
+        if report.repeated:
+            print(f"  （{name} 这一场此前已经结算过了，这次没有改动。）", flush=True)
+        for warning in report.warnings:
+            print(f"  （警告）{name}：{warning}", flush=True)
+
+
+async def _settle_after_scene(args: argparse.Namespace, engine: SceneEngine) -> None:
+    """跑完一场之后的结算回路（§7.4）：引擎只准备，**CLI 才决定**。
+
+    场景还没收束就不结算（这一场还没结束：所得仍待结算，用户随时可以回来处理）。
+    没有信息库（`--libraries-root none`/`off`/空串）时 `prepare_settlement` 立刻返回空映射，
+    这里**一个字都不打印**——整段行为与今天逐字节相同。
+    """
+    if not engine.closed:
+        return
+    pending = await engine.prepare_settlement()
+    if not pending:
+        return                                   # 没人有所得：没什么可问的
+    # 「有没有要问的」与「要问谁」是**两个**来源，这是有意的（§7.2/§7.4）：
+    #   · `pending`（= `pending_settlement()`，按 `is_pending` 过滤）回答"还有谁欠着账"
+    #     ——它是"这一场有没有东西要问"的闸门；
+    #   · `settlement_gains()` 回答"谁有**真收得上来**的东西"——清单与逐个询问只认它。
+    # 两者只在一种情形下分开：账本上记着一笔、那份条目文件却读不出来（`collect_gain` 只
+    # 给得出空所得 + 一条读盘警告）。那时**不问他**是故意的——他一条都收不上来，回答
+    # 「保留」只会把他标成已结算（§7.5 先到先得），修好文件之后本可并进去的东西就永远
+    # 没机会了；引擎会把那条警告挂进 `settlement_warnings()`（下面照旧会打出来），故
+    # 用户看得见"这一场少了一条、为什么"，不静默。
+    _print_settlement_list(engine)
+    decisions = _collect_decisions(args, list(engine.settlement_gains()))
+    if not decisions:
+        print("[结算] 没有替你结算任何一场：所得仍留在待结算，你随时可以回来处理。",
+              flush=True)
+        return
+    _print_reports(engine.apply_settlement(decisions))
 
 
 def _default_run_root(args: argparse.Namespace, demo: bool) -> Path:
@@ -124,7 +342,8 @@ async def _legacy_async_main(args: argparse.Namespace, models: Path,
     eng = SceneEngine(args.scene, args.characters, models,
                       run_root=run_root, bid_path=args.bid,
                       api_key=api_key, closing_at_block=args.closing_at_block,
-                      start_time=args.start_time)
+                      start_time=args.start_time,
+                      libraries_root=args.libraries_root)
     await eng.open_scene()
     for _ in range(args.steps):
         if eng.closed:
@@ -132,6 +351,7 @@ async def _legacy_async_main(args: argparse.Namespace, models: Path,
         await eng.step(1)
     msgs = await eng.messages()
     print(f"[closed={eng.closed}] 共 {len(msgs)} 条消息")
+    await _settle_after_scene(args, eng)         # §7.4：跑完一场才问保留/丢弃
     await _export_if_requested(args, eng)
     await eng.aclose()          # 关闭 sqlite 连接（须在本 loop 内；MemorySaver 路径为 no-op）
 
@@ -145,7 +365,8 @@ async def _demo_async_main(args: argparse.Namespace, models: Path,
     eng = SceneEngine(args.scene, args.characters, models,
                       run_root=run_root, bid_path=args.bid,
                       api_key=api_key, closing_at_block=args.closing_at_block,
-                      demo_alternate=True, start_time=args.start_time)
+                      demo_alternate=True, start_time=args.start_time,
+                      libraries_root=args.libraries_root)
     try:
         # 1) 开场指令：--prompt > stdin 提示行（空/EOF/"" → 默认开场）。
         opening = args.prompt or None
@@ -182,6 +403,7 @@ async def _demo_async_main(args: argparse.Namespace, models: Path,
         # 5) 收尾：自然收束 / q 提前退出都给出明确结论；转录须在 aclose 前写
         # （aclose 之后再用引擎会重开一条无人回收的 sqlite 连接）。
         print(f"（场景结束：{'已收束' if not quit_early else '提前退出'}）")
+        await _settle_after_scene(args, eng)     # §7.4：收束之后才问保留/丢弃
         await _export_if_requested(args, eng)
     finally:
         await eng.aclose()
@@ -197,6 +419,12 @@ def main(argv: list[str] | None = None) -> None:
     args.models = args.models or _DEFAULT_MODELS
     if args.demo and args.bid is None:
         args.bid = _DEFAULT_BID_DEMO   # demo 默认用放开的竞价，避免全员静默
+    # 信息库（§9.1 第二步 + §13.3）：先把 `--libraries-root` 解析成路径或 None（缺省 =
+    # app/libraries；`none`/`off`/空串 = 关），再给这一场装载的卡播种——老卡的
+    # `knowledge_boundary` 在**这一刻**变成库里的条目（库已存在则整段跳过，幂等）。
+    # 两条路（--demo 与遗留 --live）共用这一处，不各播一遍。
+    args.libraries_root = _resolve_libraries_root(args.libraries_root)
+    _seed_card_libraries(args.characters, args.libraries_root)
 
     if args.demo:
         live = not args.stub

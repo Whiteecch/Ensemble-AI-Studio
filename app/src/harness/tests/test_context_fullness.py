@@ -1,6 +1,6 @@
 """上下文完整性锁定：全量可见历史逐条进 think/speak + speak 补喂本人近期想法。
 
-实况问题：角色隔很多轮复读近同句，或套用紧邻他人的长模板（乙用甲的惯用句、
+实况问题：角色隔很多轮复读近同句，或套用紧邻他人的长模板（甲用乙的惯用句、
 自称自问自答）。根因二：① speak 侧没有本人内部记忆连续感，只盯着刚过去的他人那句
 容易锚定模仿；② 提示词没锁死"只做自己、不得套他人句式、不得自答"。
 本文件用离线确定性图测试锁定：
@@ -19,13 +19,13 @@ from harness.tests.helpers import assert_public_only, last_state
 
 def _cards():
     return {
-        "甲": CharacterCard(name="甲"),
         "乙": CharacterCard(name="乙"),
+        "甲": CharacterCard(name="甲"),
     }
 
 
 def _scene():
-    return Scene(name="餐厅", participants=["甲", "乙"])
+    return Scene(name="餐厅", participants=["乙", "甲"])
 
 
 def _think(urge: float, impression=None) -> dict:
@@ -41,20 +41,20 @@ def _ids(text: str) -> set[int]:
 _SEED = [
     {"id": 0, "speaker": "导演", "speaker_type": "director",
      "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0},
-    {"id": 1, "speaker": "甲", "speaker_type": "character",
+    {"id": 1, "speaker": "乙", "speaker_type": "character",
      "content": "这家店我常来。", "in_scene": "餐厅", "turn": 1},
-    {"id": 2, "speaker": "乙", "speaker_type": "character",
+    {"id": 2, "speaker": "甲", "speaker_type": "character",
      "content": "是吗。", "in_scene": "餐厅", "turn": 1},
-    {"id": 3, "speaker": "甲", "speaker_type": "character",
+    {"id": 3, "speaker": "乙", "speaker_type": "character",
      "content": "其实我紧张得手都在抖。", "in_scene": "餐厅",
-     "knows": ["甲"], "turn": 2},           # 乙不可见（knows 外密语）
-    {"id": 4, "speaker": "甲", "speaker_type": "character",
+     "knows": ["乙"], "turn": 2},           # 甲不可见（knows 外密语）
+    {"id": 4, "speaker": "乙", "speaker_type": "character",
      "content": "你喝什么？", "in_scene": "餐厅", "turn": 3},
-    {"id": 5, "speaker": "乙", "speaker_type": "character",
+    {"id": 5, "speaker": "甲", "speaker_type": "character",
      "content": "热的。", "in_scene": "餐厅", "turn": 3},
-    {"id": 6, "speaker": "甲", "speaker_type": "character",
+    {"id": 6, "speaker": "乙", "speaker_type": "character",
      "content": "那就热的。", "in_scene": "餐厅", "turn": 4},
-    {"id": 7, "speaker": "甲", "speaker_type": "character",
+    {"id": 7, "speaker": "乙", "speaker_type": "character",
      "content": "再加一碟花生。", "in_scene": "餐厅", "turn": 5},
 ]
 
@@ -68,10 +68,10 @@ def _initial_state(turn: int = 5) -> dict:
 def test_full_history_every_visible_line_reaches_think_and_speak(tmp_path, monkeypatch):
     """8 条共享历史（含 1 条只对白可见的密语 id3）：
 
-    · 甲的 think 看到全部 8 条；乙的 think 看到 7 条、绝不见 [3]；
-    · 胜出者乙的 speak 视图 = 她可见的 7 条，[3] 绝不出现在 speak 提示词；
+    · 乙的 think 看到全部 8 条；甲的 think 看到 7 条、绝不见 [3]；
+    · 胜出者甲的 speak 视图 = 她可见的 7 条，[3] 绝不出现在 speak 提示词；
     · built 用户消息（模型真看到的）同样逐条带 [id]。
-    白 urge 0.0、乙 urge 1.5 → 无在位者 yield_to 乙出块。"""
+    白 urge 0.0、甲 urge 1.5 → 无在位者 yield_to 甲出块。"""
     from harness import graph as graph_mod
     from harness.prompters import build_speak_messages as _real_speak
     from harness.prompters import build_think_messages as _real_think
@@ -96,7 +96,7 @@ def test_full_history_every_visible_line_reaches_think_and_speak(tmp_path, monke
     monkeypatch.setattr(graph_mod, "build_speak_messages", _speak_spy)
 
     cards, scene = _cards(), _scene()
-    think = StubBackend(json_script=[_think(0.0), _think(1.5)])   # 白安静、乙抢话
+    think = StubBackend(json_script=[_think(0.0), _think(1.5)])   # 白安静、甲抢话
     speak = StubBackend(line_script=["第一次来这，看你挺自在。"])
     graph = build_graph(cards, scene, think, speak, run_root=tmp_path / "runs")
 
@@ -104,20 +104,20 @@ def test_full_history_every_visible_line_reaches_think_and_speak(tmp_path, monke
         _initial_state(),
         config={"configurable": {"thread_id": "fullhist"}, "max_concurrency": 4}))
 
-    # think：白见 8 条（含密语 id3），乙见 7 条（knows 投影，[3] 不混入）
-    assert _ids(think_view["甲"]) == {0, 1, 2, 3, 4, 5, 6, 7}
-    assert _ids(think_view["乙"]) == {0, 1, 2, 4, 5, 6, 7}
-    assert "[3]" not in think_view["乙"]
+    # think：白见 8 条（含密语 id3），甲见 7 条（knows 投影，[3] 不混入）
+    assert _ids(think_view["乙"]) == {0, 1, 2, 3, 4, 5, 6, 7}
+    assert _ids(think_view["甲"]) == {0, 1, 2, 4, 5, 6, 7}
+    assert "[3]" not in think_view["甲"]
 
-    # speak：胜出者乙，视图逐条含她可见的全部 7 条，[3] 不在其中
-    assert len(speak_views) == 1 and speak_views[0][0] == "乙"
+    # speak：胜出者甲，视图逐条含她可见的全部 7 条，[3] 不在其中
+    assert len(speak_views) == 1 and speak_views[0][0] == "甲"
     assert _ids(speak_views[0][1]) == {0, 1, 2, 4, 5, 6, 7}
     assert "[3]" not in speak_views[0][1]
 
     # built 提示词（模型真正看到的 user 消息）确实逐条带 [id]
-    assert {0, 1, 2, 3, 4, 5, 6, 7} <= _ids(built_user["think:甲"])
-    assert {0, 1, 2, 4, 5, 6, 7} <= _ids(built_user["think:乙"])
-    assert {0, 1, 2, 4, 5, 6, 7} <= _ids(built_user["speak:乙"])
+    assert {0, 1, 2, 3, 4, 5, 6, 7} <= _ids(built_user["think:乙"])
+    assert {0, 1, 2, 4, 5, 6, 7} <= _ids(built_user["think:甲"])
+    assert {0, 1, 2, 4, 5, 6, 7} <= _ids(built_user["speak:甲"])
 
     state = asyncio.run(last_state(graph, "fullhist"))
     assert_public_only(state)
@@ -148,8 +148,8 @@ def test_speak_feeds_winning_speakers_own_state_and_impressions(tmp_path, monkey
 
     run_root = tmp_path / "runs"
     # 预存两人的印象文件（本人私有内心），模拟已进行一阵的场景
-    for name, other, line in [("甲", "乙", "她话少但戳人。"),
-                              ("乙", "甲", "他好像很紧张。")]:
+    for name, other, line in [("乙", "甲", "她话少但戳人。"),
+                              ("甲", "乙", "他好像很紧张。")]:
         imp_dir = run_root / name / "impressions"
         imp_dir.mkdir(parents=True, exist_ok=True)
         (imp_dir / f"{other}.md").write_text(line, encoding="utf-8")
@@ -166,7 +166,7 @@ def test_speak_feeds_winning_speakers_own_state_and_impressions(tmp_path, monkey
     # 恰一人出块；speak 收到本人 state_text（紧接其 think）与 impressions_text（私有内心）
     assert len(seen) == 1
     winner = next(iter(seen))
-    assert winner in {"甲", "乙"}
+    assert winner in {"乙", "甲"}
     assert seen[winner]["state_text"] != ""
     assert "唤醒" in seen[winner]["state_text"]
     assert seen[winner]["impressions_text"] != ""
@@ -202,7 +202,7 @@ def _next_block(turn: int, keep_incumbent: bool) -> dict:
 
 
 def test_speak_prev_line_anchor_is_other_speakers_visible_line(tmp_path, monkeypatch):
-    """speak 因果锚点：甲刚开口 → 下一块乙拿话筒，prev_line_text 正是白那条归属句。
+    """speak 因果锚点：乙刚开口 → 下一块甲拿话筒，prev_line_text 正是白那条归属句。
 
     归属行须带 [id]/说话人（同 view 行约定）、非空、own_previous=False；built 用户消息
     的「此刻·上一句」小节含归属行原文与自续/他人双分支。"""
@@ -222,7 +222,7 @@ def test_speak_prev_line_anchor_is_other_speakers_visible_line(tmp_path, monkeyp
     monkeypatch.setattr(graph_mod, "build_speak_messages", _speak_spy)
 
     cards, scene = _cards(), _scene()
-    # 块1 甲开口（urge 高）；块2 白回落、乙抢话（无在位者 force yield_to）
+    # 块1 乙开口（urge 高）；块2 白回落、甲抢话（无在位者 force yield_to）
     think = StubBackend(json_script=[_think(1.0), _think(0.0),
                                      _think(0.0), _think(1.5)])
     speak = StubBackend(line_script=["这家店我常来。", "是吗，那听你的。"])
@@ -235,13 +235,13 @@ def test_speak_prev_line_anchor_is_other_speakers_visible_line(tmp_path, monkeyp
         _next_block(turn=1, keep_incumbent=False),
         config={"configurable": {"thread_id": "spkanchor"}, "max_concurrency": 4}))
 
-    assert [c["name"] for c in calls] == ["甲", "乙"]
+    assert [c["name"] for c in calls] == ["乙", "甲"]
     white, xiao = calls
-    # 甲块1可见最新 = 导演开场行（自己说的话要等块2才有）
+    # 乙块1可见最新 = 导演开场行（自己说的话要等块2才有）
     assert white["prev_line_text"] == "[0] 导演: （餐厅开场）"
     assert white["own_previous"] is False
-    # 乙块2锚点 = 甲刚说的那句归属行（非空、带说话人），不是她自己的话
-    assert xiao["prev_line_text"] == "[1] 甲: 这家店我常来。"
+    # 甲块2锚点 = 乙刚说的那句归属行（非空、带说话人），不是她自己的话
+    assert xiao["prev_line_text"] == "[1] 乙: 这家店我常来。"
     assert xiao["own_previous"] is False
     assert "【此刻·上一句】" in xiao["user"]
     assert "这家店我常来。" in xiao["user"]
@@ -252,7 +252,7 @@ def test_speak_prev_line_anchor_is_other_speakers_visible_line(tmp_path, monkeyp
 
     state = asyncio.run(last_state(graph, "spkanchor"))
     assert_public_only(state)
-    assert state["messages"][-1]["speaker"] == "乙"
+    assert state["messages"][-1]["speaker"] == "甲"
 
 
 def test_speak_prev_line_own_tail_self_continuation(tmp_path, monkeypatch):
@@ -277,7 +277,7 @@ def test_speak_prev_line_own_tail_self_continuation(tmp_path, monkeypatch):
     monkeypatch.setattr(graph_mod, "build_speak_messages", _speak_spy)
 
     cards, scene = _cards(), _scene()
-    # 块1 白 urge 高、乙 0.0 → 白开口；块2 同态势、保留在位者 → 白续话
+    # 块1 白 urge 高、甲 0.0 → 白开口；块2 同态势、保留在位者 → 白续话
     think = StubBackend(json_script=[_think(1.0), _think(0.0),
                                      _think(1.0), _think(0.0)])
     speak = StubBackend(line_script=["这家店我常来。", "所以常点的就那几样。"])
@@ -290,13 +290,13 @@ def test_speak_prev_line_own_tail_self_continuation(tmp_path, monkeypatch):
         _next_block(turn=1, keep_incumbent=True),
         config={"configurable": {"thread_id": "spkown"}, "max_concurrency": 4}))
 
-    assert [c["name"] for c in calls] == ["甲", "甲"]
+    assert [c["name"] for c in calls] == ["乙", "乙"]
     _, cont = calls
     assert cont["own_previous"] is True
-    assert cont["prev_line_text"] == "[1] 甲: 这家店我常来。"
+    assert cont["prev_line_text"] == "[1] 乙: 这家店我常来。"
     user = cont["user"]
     assert "【此刻·上一句】" in user
-    assert "[1] 甲: 这家店我常来。" in user
+    assert "[1] 乙: 这家店我常来。" in user
     assert "再复读" in user                    # 别把自己刚说的当新内容复读
     assert "若它的说话人正是你自己" in user
     assert "自然续说" in user
@@ -306,13 +306,13 @@ def test_speak_prev_line_own_tail_self_continuation(tmp_path, monkeypatch):
     state = asyncio.run(last_state(graph, "spkown"))
     assert_public_only(state)
     speakers = [m["speaker"] for m in state["messages"]]
-    assert speakers[-1] == "甲" and speakers.count("甲") == 2
+    assert speakers[-1] == "乙" and speakers.count("乙") == 2
 
 
 def test_speak_prev_line_never_leaks_knows_restricted_newest(tmp_path, monkeypatch):
     """C1(可见性) 进 speak 锚点：knows 限定的最新密语绝不当胜出者的 prev_line_text。
 
-    末条是甲只对自己可见的密语（id2）。白安静、乙以高 urge 拿话筒时，她的
+    末条是乙只对自己可见的密语（id2）。白安静、甲以高 urge 拿话筒时，她的
     锚点只能取自她本人可见的尾句（白公开的 id1）——密语内容绝不进 speak 提示词。"""
     from harness import graph as graph_mod
     from harness.prompters import build_speak_messages as _real_speak
@@ -333,13 +333,13 @@ def test_speak_prev_line_never_leaks_knows_restricted_newest(tmp_path, monkeypat
     seed = [
         {"id": 0, "speaker": "导演", "speaker_type": "director",
          "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0},
-        {"id": 1, "speaker": "甲", "speaker_type": "character",
+        {"id": 1, "speaker": "乙", "speaker_type": "character",
          "content": "今晚这桌我请。", "in_scene": "餐厅", "turn": 1},
-        {"id": 2, "speaker": "甲", "speaker_type": "character",
+        {"id": 2, "speaker": "乙", "speaker_type": "character",
          "content": "其实我紧张得手都在抖。", "in_scene": "餐厅",
-         "knows": ["甲"], "turn": 2},   # 密语：乙不可见，却是共享态最新条
+         "knows": ["乙"], "turn": 2},   # 密语：甲不可见，却是共享态最新条
     ]
-    think = StubBackend(json_script=[_think(0.0), _think(1.5)])   # 白安静、乙拿话筒
+    think = StubBackend(json_script=[_think(0.0), _think(1.5)])   # 白安静、甲拿话筒
     speak = StubBackend(line_script=["你先喝口热的，别拘谨。"])
     graph = build_graph(cards, scene, think, speak, run_root=tmp_path / "runs")
 
@@ -350,17 +350,17 @@ def test_speak_prev_line_never_leaks_knows_restricted_newest(tmp_path, monkeypat
 
     assert len(calls) == 1
     xiao = calls[0]
-    assert xiao["name"] == "乙"
+    assert xiao["name"] == "甲"
     # 锚点 = 她可见的尾句（白公开的 id1），绝不是密语 id2
-    assert xiao["prev_line_text"] == "[1] 甲: 今晚这桌我请。"
+    assert xiao["prev_line_text"] == "[1] 乙: 今晚这桌我请。"
     assert "紧张" not in xiao["prev_line_text"]
     # own_previous：她可见最新是白（他人）的话 → False
     assert xiao["own_previous"] is False
     # built 用户消息：含锚点小节与归属行，但密语内容绝不混入
     assert "【此刻·上一句】" in xiao["user"]
-    assert "[1] 甲: 今晚这桌我请。" in xiao["user"]
+    assert "[1] 乙: 今晚这桌我请。" in xiao["user"]
     assert "紧张" not in xiao["user"] and "手都在抖" not in xiao["user"]
 
     state = asyncio.run(last_state(graph, "spkvis"))
     assert_public_only(state)
-    assert state["messages"][-1]["speaker"] == "乙"
+    assert state["messages"][-1]["speaker"] == "甲"

@@ -103,7 +103,7 @@ class _FakeWorker(QObject):
 
     def schedule_cast_change(self, character_name, action, fire_after_rounds,
                              notify=None, notify_text="", visible=True,
-                             turns: int = 0) -> None:
+                             turns: int = 0, reason: str = "") -> None:
         self.calls.append({"schedule_cast_change": character_name})
 
     def restart(self, *a, **k) -> None:
@@ -142,8 +142,8 @@ class _FakeWorker(QObject):
 
 def _window() -> MainWindow:
     """装配好的离屏窗口（stub 配置，场景未开；不读任何素材文件）。"""
-    cfg = AppConfig(scene=Path("scenes/餐厅.json"),
-                    characters=[Path("characters/甲.json")],
+    cfg = AppConfig(scene=Path("scenes/贝克街221B.json"),
+                    characters=[Path("characters/福尔摩斯.json")],
                     models=Path("config/models.yaml"), bid=Path("config/bid.yaml"),
                     run_root=Path("runs"), live=False, api_key=None,
                     opening="入夜。")
