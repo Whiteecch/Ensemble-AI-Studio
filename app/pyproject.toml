@@ -3,9 +3,26 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "harness"
+# 发行名（pip/PyPI 上看到的名字）。**import 包名仍是 harness**（src/harness），
+# 两者刻意分开：改发行名不影响任何 `from harness import ...`。
+name = "ensemble"
 version = "0.1.0"
+description = "A multi-agent scene engine: characters that think privately, speak on their own, and a scene that directs them."
+readme = "README.md"
+license = "MIT"
+license-files = []
 requires-python = ">=3.10"
+keywords = ["multi-agent", "roleplay", "simulation", "llm", "langgraph", "scene"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Artistic Software",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "langgraph>=1.2",
     "langgraph-checkpoint-sqlite>=2.0",
@@ -17,6 +34,16 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 gui = ["PySide6>=6.6"]
+
+[project.urls]
+Homepage = "https://github.com/Whiteecch/Ensemble-AI-Studio"
+Repository = "https://github.com/Whiteecch/Ensemble-AI-Studio"
+Issues = "https://github.com/Whiteecch/Ensemble-AI-Studio/issues"
+
+[project.scripts]
+ensemble-gui = "harness.gui.app:main"
+ensemble-demo = "harness.runner:main"
+ensemble-import = "harness.tools.import_cards:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
