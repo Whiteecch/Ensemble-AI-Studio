@@ -42,7 +42,7 @@ from harness.prompters import build_summary_messages
 from harness.schemas import CharacterCard
 
 A = "甲"
-SCENE = "餐厅"
+SCENE = "贝克街221B"
 
 
 # --------------------------------------------------------------------- 夹具 --

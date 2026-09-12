@@ -27,8 +27,8 @@ _NARRATION = "隔壁桌有人站起来，椅子在瓷砖上刮出一声。"
 
 def _build(tmp_path: Path, **kw) -> SceneEngine:
     """二人场（硬边界 22:00）+ 三档模型（think/speak/narrate 全 stub 可换）。"""
-    (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
+    (tmp_path / "贝克街221B.json").write_text(json.dumps({
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     for name in ("甲", "乙"):
@@ -42,7 +42,7 @@ def _build(tmp_path: Path, **kw) -> SceneEngine:
     bid = tmp_path / "bid.yaml"
     bid.write_text("interruption_threshold: 0.4\nspeak_threshold: 0.0\n"
                    "silence_k: 100000\n", encoding="utf-8")
-    eng = SceneEngine(tmp_path / "餐厅.json",
+    eng = SceneEngine(tmp_path / "贝克街221B.json",
                       [tmp_path / "甲.json", tmp_path / "乙.json"],
                       tmp_path / "models.yaml", run_root=tmp_path / "runs",
                       bid_path=bid, closing_at_block=200, **kw)
@@ -61,7 +61,7 @@ def test_build_narrate_messages_is_scene_omniscient():
     """场景提示词：全知系统口吻（不是角色）+ 四段局势 + 收尾「请写一到两行：」。"""
     from harness.prompters import build_narrate_messages
 
-    msgs = build_narrate_messages("[1] 甲: 他胳膊在流血。", "场景：餐厅",
+    msgs = build_narrate_messages("[1] 甲: 他胳膊在流血。", "场景：贝克街221B",
                                   "21:50，距打烊还有 10 分钟", "角色在复读；久未推进")
     assert [m["role"] for m in msgs] == ["system", "user"]
     system = msgs[0]["content"]
@@ -72,7 +72,7 @@ def test_build_narrate_messages_is_scene_omniscient():
     for marker in ("【整场对话】", "【场景】", "【当前时刻】", "【现在需要你推进的原因】"):
         assert marker in user
     assert user.startswith("【整场对话】\n[1] 甲: 他胳膊在流血。")
-    assert "【场景】场景：餐厅" in user
+    assert "【场景】场景：贝克街221B" in user
     assert "【当前时刻】21:50，距打烊还有 10 分钟" in user
     assert "【现在需要你推进的原因】角色在复读；久未推进" in user
     assert user.endswith("\n\n请写一到两行：")
@@ -100,7 +100,7 @@ async def test_narration_fires_once_per_cooldown_window(tmp_path):
     n = first[0]
     assert n["speaker"] == "场景" and n["speaker_type"] == "narrator"
     assert n.get("knows") is None, "叙述是所有人都能看见的（无 knows 限定）"
-    assert n["in_scene"] == "餐厅", "叙述落在当前所在场景（单一空间键，已无对话圈）"
+    assert n["in_scene"] == "贝克街221B", "叙述落在当前所在场景（单一空间键，已无对话圈）"
     assert n["content"] == _NARRATION
     assert isinstance(n["id"], int) and n["id"] > 0
 
@@ -256,8 +256,8 @@ async def test_narration_backend_failure_is_swallowed(tmp_path):
 
 async def test_narrate_role_falls_back_to_speak_backend(tmp_path):
     """旧 models.yaml 没有 narrate 档 → 退用 speak 档（老配置一字不改照跑）。"""
-    (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"]}, ensure_ascii=False),
+    (tmp_path / "贝克街221B.json").write_text(json.dumps({
+        "name": "贝克街221B", "participants": ["甲", "乙"]}, ensure_ascii=False),
         encoding="utf-8")
     for name in ("甲", "乙"):
         (tmp_path / f"{name}.json").write_text(json.dumps(
@@ -266,7 +266,7 @@ async def test_narrate_role_falls_back_to_speak_backend(tmp_path):
     (tmp_path / "models.yaml").write_text(
         "think:\n  backend: stub\n  model: stub\n  params: {}\n"
         "speak:\n  backend: stub\n  model: stub\n  params: {}\n", encoding="utf-8")
-    eng = SceneEngine(tmp_path / "餐厅.json",
+    eng = SceneEngine(tmp_path / "贝克街221B.json",
                       [tmp_path / "甲.json", tmp_path / "乙.json"],
                       tmp_path / "models.yaml", run_root=tmp_path / "runs")
     assert eng.narrate_backend is eng.speak_backend

@@ -86,6 +86,52 @@ def _isolate_user_settings(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_user_data_dir(tmp_path_factory, monkeypatch):
+    """**整场测试**把 `paths.user_dir()`（用户数据目录的单一闸门）指到一次性 tmp。
+
+    为什么必须（打包改造 §1.1/§1.3 的新增风险）：`paths.ensure_user_dirs()` 会**往用户目录
+    复制文件**（首次运行播种），而 `gui/app.py::run()`、`tools/import_cards.py`、
+    `runner._default_run_root`、`SceneWorker`/`SceneEngine` 的 run_root 缺省都改走用户目录。
+    不隔离的话，跑一次测试就会在**真实** `%APPDATA%\\Ensemble-AI-Studio\\` 里播一批素材、
+    写一批存档（更别说读：本机一旦真有数据，用例结果就随这台机器变）。这跟上面
+    `default_settings_path` 夹具是同一条纪律——用户目录**只经一个函数**，指到 tmp 就把整条
+    写入路径关进了沙箱。
+
+    另外把 `gui/app.py` 的 `_DEFAULT_RUN_ROOT` 也指过去：那是**import 时**算好的常量（保留
+    惰性会破坏既有用例对 `_DEFAULT_*` 的 monkeypatch 点，见 `test_gui_library`），故这里显式
+    对齐。用例自己再 monkeypatch 这个名字仍然生效（函数级 monkeypatch 在本夹具之后应用）。
+
+    还有 `paths.legacy_user_dirs()`（改名前的旧目录，设置读取的兼容回落）：它按 `_platform_base()`
+    直接拼路径、**不经过 `user_dir()`**，故上面那个 patch 拦不住它——真实机器上就存在
+    `%APPDATA%\\文字创作agent\\settings.json`（开发机就有），不置空的话用例会读到用户真实设置
+    且结果随机器变。这里指成空表：测试里"老目录"根本不存在。要验兼容回落行为的用例自己
+    monkeypatch 它（见 `test_gui_settings`）。
+    """
+    from harness import paths as paths_mod
+
+    root = tmp_path_factory.mktemp("user-data") / paths_mod.APP_DIR_NAME
+    monkeypatch.setattr(paths_mod, "user_dir", lambda: root)
+    monkeypatch.setattr(paths_mod, "legacy_user_dirs", lambda: [])
+    try:
+        from harness.gui import app as gui_app
+    except ImportError:                   # pragma: no cover - 缺依赖时只隔离能隔离的那侧
+        return root
+    monkeypatch.setattr(gui_app, "_DEFAULT_RUN_ROOT", paths_mod.runs_dir())
+    return root
+
+
+@pytest.fixture
+def user_data_sandbox(_isolate_user_data_dir) -> Path:
+    """上面那个沙箱用户目录的**公开别名**（用例想往里断言/放东西时按需请求）。
+
+    自动隔离是 autouse 的，用例通常不必关心；但"某条路径必须落在用户目录里"这类断言需要
+    知道沙箱到底是哪儿——请求本夹具即可，不必自己再 monkeypatch 一遍（两处各指一个目录
+    会让断言跟实现错位）。
+    """
+    return _isolate_user_data_dir
+
+
+@pytest.fixture(autouse=True)
 def _isolate_libraries_root(tmp_path_factory, monkeypatch):
     """**整场测试**都把「缺省信息库根」重定向到一次性临时目录（同上面那条的纪律）。
 

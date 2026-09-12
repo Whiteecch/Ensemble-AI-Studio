@@ -93,6 +93,7 @@ from . import i18n as i18n_mod
 from . import knowledgesettle as settle_mod
 from . import knowledgestore as knowledge_store_mod
 from . import memory as memory_mod
+from . import paths as paths_mod
 from . import sceneclock as sc
 from . import scenarist as scenarist_mod
 from . import scenestore as scenestore_mod
@@ -358,7 +359,8 @@ def _pick_backend(cfg, api_key, base_url: str | None = None):
 
 class SceneEngine:
     def __init__(self, scene_path: Path, card_paths: list[Path], models_path: Path,
-                 run_root: Path, bid_path: Path | None = None, api_key: str | None = None,
+                 run_root: Path | None = None, bid_path: Path | None = None,
+                 api_key: str | None = None,
                  closing_at_block: int | None = None, thread_id: str = "scene1",
                  demo_alternate: bool = False,
                  start_time: str | None = None,
@@ -452,7 +454,10 @@ class SceneEngine:
         self._bid = load_bid_params(bid_path) if bid_path else None
         self.closing_at_block = closing_at_block
         self.thread_id = thread_id
-        self.run_root = Path(run_root)
+        # run_root 缺省 = 用户数据目录下的 runs/（§1.2）：存档是写，cwd 与安装目录都可能
+        # 不可写。显式传入的值照旧原样用（缺省只补 None，不动任何调用方给的值）。
+        self.run_root = (Path(run_root) if run_root is not None
+                         else paths_mod.runs_dir())
         self.demo_alternate = demo_alternate    # CLI 流式演示的轮流开口叠加
 
         # ---- 信息库（设计文档 §5/§6）----
@@ -903,11 +908,11 @@ class SceneEngine:
 
     async def open_scene(self, opening: str | None = None) -> list[dict]:
         """开场：导演开场消息的 content = opening（给了就用），否则沿用默认
-        （"夜晚的餐厅，二人临窗而坐。"）。开场消息不带时刻戳——真实流速虚拟钟在
+        （"夜晚的贝克街221B，二人临窗而坐。"）。开场消息不带时刻戳——真实流速虚拟钟在
         worker/GUI 侧（开场即此刻），由 worker 派发时补 time_hhmmss。其余与事件流不变。"""
         graph = await self._ensure_graph()
         content = (opening if opening is not None
-                   else "夜晚的餐厅，二人临窗而坐。")
+                   else "夜晚的贝克街221B，二人临窗而坐。")
         opening_msg = {"id": 0, "speaker": "导演", "speaker_type": "director",
                        "content": content,
                        "in_scene": self._scene_space, "turn": 0}

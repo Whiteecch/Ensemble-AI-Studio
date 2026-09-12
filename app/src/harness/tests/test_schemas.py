@@ -7,13 +7,13 @@ from harness.schemas import (
 
 
 def test_message_knows_none_means_visible_to_all():
-    m = Message(id=1, speaker="丁", content="你好", in_scene="餐厅")
+    m = Message(id=1, speaker="丁", content="你好", in_scene="贝克街221B")
     assert m.is_visible_to("戊") is True
     assert m.is_visible_to("路人") is True
 
 
 def test_message_knows_restricts_visibility():
-    m = Message(id=2, speaker="丁", content="秘密", in_scene="餐厅",
+    m = Message(id=2, speaker="丁", content="秘密", in_scene="贝克街221B",
                 knows=["丁", "戊"])
     assert m.is_visible_to("戊") is True
     assert m.is_visible_to("庚") is False
@@ -27,7 +27,7 @@ def test_scene_and_character_card_roundtrip():
     assert card.weights.w2_arousal == 0.5  # 默认权重
     assert card.emotion_decay_rate == 0.4
 
-    scene = Scene(name="餐厅", participants=["丁", "戊"],
+    scene = Scene(name="贝克街221B", participants=["丁", "戊"],
                   hard_boundary=HardBoundary(type="time", value="22:00", desc="打烊"))
     assert scene.hard_boundary.value == "22:00"
     assert scene.participants == ["丁", "戊"]     # 派生属性
@@ -151,7 +151,7 @@ def test_character_card_migration_performs_no_io(monkeypatch):
 
 def test_scene_new_fields_default_to_empty():
     """§3.1 新字段：缺省全空、可写、不影响旧写法。"""
-    scene = Scene(name="餐厅")
+    scene = Scene(name="贝克街221B")
     assert scene.date == "" and scene.background == ""
     assert scene.description == "" and scene.description_mutable is False
     assert scene.plot_direction == "" and scene.hooks == []
@@ -185,13 +185,13 @@ def test_scene_new_fields_roundtrip_through_dump():
 
 def test_scene_legacy_participants_migrate_into_characters():
     """旧场景文件只有 participants（无 characters）→ 迁移进 characters（保序）。"""
-    scene = Scene.model_validate({"name": "餐厅", "participants": ["甲", "乙", "丙"]})
+    scene = Scene.model_validate({"name": "贝克街221B", "participants": ["甲", "乙", "丙"]})
     assert scene.participants == ["甲", "乙", "丙"]
     assert [(m.name, m.entered_round, m.entered_at) for m in scene.characters] == [
         ("甲", 0, ""), ("乙", 0, ""), ("丙", 0, "")]
     assert "participants" not in scene.model_dump(), "participants 不再是字段"
     # 两个键都在时以 characters 为准（新字段优先）
-    both = Scene.model_validate({"name": "餐厅", "participants": ["旧"],
+    both = Scene.model_validate({"name": "贝克街221B", "participants": ["旧"],
                                  "characters": [{"name": "新"}]})
     assert both.participants == ["新"]
 
@@ -199,7 +199,7 @@ def test_scene_legacy_participants_migrate_into_characters():
 def test_scene_legacy_circles_are_dropped():
     """旧文件的 circles（对话圈已删除）不参与任何语义，也不出现在 dump 里。"""
     scene = Scene.model_validate({
-        "name": "餐厅", "participants": ["甲"],
+        "name": "贝克街221B", "participants": ["甲"],
         "circles": [{"id": "桌A", "members": ["甲", "乙"]}]})
     assert scene.participants == ["甲"]
     assert "circles" not in scene.model_dump()
@@ -207,26 +207,26 @@ def test_scene_legacy_circles_are_dropped():
 
 def test_scene_characters_accept_bare_names_and_keep_order():
     """characters 写成裸字符串（手写场景 JSON）也认，顺序即演员表顺序。"""
-    scene = Scene.model_validate({"name": "餐厅", "characters": ["乙", "甲"]})
+    scene = Scene.model_validate({"name": "贝克街221B", "characters": ["乙", "甲"]})
     assert scene.participants == ["乙", "甲"]
     assert scene.characters[0] == SceneCastMember(name="乙")
 
 
 def test_scene_hard_boundary_accepts_none_type():
     """§3.1：hard_boundary.type 新增 "none"；未知类型仍拒绝。"""
-    assert Scene(name="餐厅", hard_boundary={"type": "none"}).hard_boundary.type == "none"
+    assert Scene(name="贝克街221B", hard_boundary={"type": "none"}).hard_boundary.type == "none"
     with pytest.raises(ValidationError):
-        Scene(name="餐厅", hard_boundary={"type": "打烊"})
+        Scene(name="贝克街221B", hard_boundary={"type": "打烊"})
 
 
 def test_scene_rejects_bad_hook_dict_loudly():
     """hooks 是用户内容：结构不合法当场报 ValidationError，绝不静默丢弃。"""
     with pytest.raises(ValidationError):
-        Scene.model_validate({"name": "餐厅",
+        Scene.model_validate({"name": "贝克街221B",
                               "hooks": [{"id": "h", "condition": "若…",
                                          "event_kind": "不存在的事件"}]})
     with pytest.raises(ValidationError):
-        Scene.model_validate({"name": "餐厅", "hooks": [{"id": "h"}]})  # 缺 condition
+        Scene.model_validate({"name": "贝克街221B", "hooks": [{"id": "h"}]})  # 缺 condition
 
 
 def test_corpus_defaults_are_not_shared_between_instances():

@@ -501,7 +501,7 @@ def test_ensure_scene_copy_creates_once_then_reuses(tmp_path):
 
     assert ensure_scene_copy(src, dst) is True            # 首次创建
     lib = load_library(dst).library
-    lib.upsert(_entry("本场所得", origin=EntryOrigin(kind="scene", scene="餐厅", turn=3)))
+    lib.upsert(_entry("本场所得", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=3)))
     save_library(lib, dst)
 
     assert ensure_scene_copy(src, dst) is False           # 复用，不重建
@@ -523,8 +523,8 @@ def test_truncate_drops_only_this_scene_entries(tmp_path):
     create_scene_copy(src, dst)
 
     lib = load_library(dst).library
-    lib.upsert(_entry("早的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=1)))
-    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=9)))
+    lib.upsert(_entry("早的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=1)))
+    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=9)))
     lib.upsert(_entry("借来的", origin=EntryOrigin(kind="wide")))
     save_library(lib, dst)
 
@@ -546,7 +546,7 @@ def test_truncate_keeps_previous_scene_entry_copied_as_baseline(tmp_path):
     dst = scene_library_dir(tmp_path / "runs" / "app-1", "丙")
     create_scene_copy(src, dst)
     lib = load_library(dst).library
-    lib.upsert(_entry("这一场的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=2)))
+    lib.upsert(_entry("这一场的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=2)))
     save_library(lib, dst)
 
     assert truncate_copy_after_turn(dst, 0) == 1
@@ -561,8 +561,8 @@ def test_truncate_is_idempotent_and_prunes_pending(tmp_path):
     """
     dst = scene_library_dir(tmp_path / "runs" / "app-1", "丙")
     lib = Library(name="丙", scope="character", owner="丙")
-    lib.upsert(_entry("早的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=1)))
-    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=9)))
+    lib.upsert(_entry("早的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=1)))
+    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=9)))
     save_library(lib, dst)
     record_pending(dst, "早的")
     record_pending(dst, "晚的")
@@ -584,7 +584,7 @@ def test_truncate_keeps_state_when_the_file_cannot_be_deleted(tmp_path, monkeypa
     """
     dst = scene_library_dir(tmp_path / "runs" / "app-1", "丙")
     lib = Library(name="丙", owner="丙")
-    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=9)))
+    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=9)))
     save_library(lib, dst)
     record_pending(dst, "晚的")
 
@@ -711,7 +711,7 @@ def test_seed_is_skipped_when_library_already_exists(tmp_path):
     card = _FakeCard(["知道：药铺的暗格"])
     assert seed_from_card(card, dst).created is True
     lib = load_library(dst).library
-    lib.upsert(_entry("本场刚学的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=2)))
+    lib.upsert(_entry("本场刚学的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=2)))
     save_library(lib, dst)
 
     again = seed_from_card(card, dst)
@@ -1120,7 +1120,7 @@ def test_truncate_drops_the_rounds_of_the_entries_it_deletes(tmp_path):
     """
     dst = scene_library_dir(tmp_path / "runs" / "app-1", "丙")
     lib = Library(name="丙", owner="丙")
-    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=9)))
+    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=9)))
     save_library(lib, dst)
     record_pending(dst, "晚的", revised=True, turn=9)
 
@@ -1138,7 +1138,7 @@ def test_truncate_with_unreadable_cut_deletes_nothing(tmp_path):
     """
     dst = scene_library_dir(tmp_path / "runs" / "app-1", "丙")
     lib = Library(name="丙", owner="丙")
-    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="餐厅", turn=9)))
+    lib.upsert(_entry("晚的", origin=EntryOrigin(kind="scene", scene="贝克街221B", turn=9)))
     save_library(lib, dst)
 
     assert truncate_copy_after_turn(dst, None) == 0

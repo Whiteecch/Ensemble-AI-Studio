@@ -38,13 +38,13 @@ def qapp():
 
 
 def _write_fixture(tmp_path: Path):
-    scene = tmp_path / "餐厅.json"
+    scene = tmp_path / "贝克街221B.json"
     a = tmp_path / "甲.json"
     b = tmp_path / "乙.json"
     models = tmp_path / "models.yaml"
     scene.write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
-        "circles": [{"id": "餐厅", "members": ["甲", "乙"]}],
+        "name": "贝克街221B", "participants": ["甲", "乙"],
+        "circles": [{"id": "贝克街221B", "members": ["甲", "乙"]}],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     a.write_text(json.dumps({"name": "甲", "personality": {"描述": "冷静"}},
@@ -347,7 +347,7 @@ def test_gui_reopen_after_natural_finish_restarts_scene(qapp, tmp_path):
         assert _wait_until(qapp, lambda: len(chars()) > before, 6000), \
             "重开后应继续自主开口"
         assert _wait_until(qapp, lambda: worker.can_say()), "重开后应可发话"
-        assert "夜晚的餐厅，二人临窗而坐。" in win._view.toPlainText(), \
+        assert "夜晚的贝克街221B，二人临窗而坐。" in win._view.toPlainText(), \
             "重开后的开场应重新进入对白"
     finally:
         worker.shutdown(4000)
@@ -396,8 +396,8 @@ def test_worker_open_failure_emits_error_and_can_retry(qapp, tmp_path):
 
         # 补上场景素材 → 重开可恢复。
         scene.write_text(json.dumps({
-            "name": "餐厅", "participants": ["甲", "乙"],
-            "circles": [{"id": "餐厅", "members": ["甲", "乙"]}],
+            "name": "贝克街221B", "participants": ["甲", "乙"],
+            "circles": [{"id": "贝克街221B", "members": ["甲", "乙"]}],
             "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
             ensure_ascii=False), encoding="utf-8")
         worker.restart("再试一场。")
@@ -415,8 +415,8 @@ def test_gui_stop_now_closes_scene_with_red_status(qapp, tmp_path):
     scene, a, b, models = _write_fixture(tmp_path)
     # 无 time 硬边界 → 唯一收束路径是大块钟兜底(200)，点停止前不会自然结束。
     scene.write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
-        "circles": [{"id": "餐厅", "members": ["甲", "乙"]}]},
+        "name": "贝克街221B", "participants": ["甲", "乙"],
+        "circles": [{"id": "贝克街221B", "members": ["甲", "乙"]}]},
         ensure_ascii=False), encoding="utf-8")
     bid = _make_stub_bid(tmp_path / "stop-bid.yaml")
     cfg = AppConfig(scene=scene, characters=[a, b], models=models, bid=bid,
@@ -470,7 +470,7 @@ def test_gui_scene_time_clock_and_pause_resume(qapp, tmp_path):
         assert _wait_until(qapp, lambda: win._clock_time["start"].text() == "21:30",
                            6000), "左栏应显示开始 21:30"
         assert win._boundary_value.text() == "22:00", "「边界」行应显示 22:00"
-        assert "打烊" not in _left_text(win), "左栏不得再出现餐厅绑定措辞「打烊」"
+        assert "打烊" not in _left_text(win), "左栏不得再出现贝克街221B绑定措辞「打烊」"
 
         # 对白消息带 HH:MM 时刻戳；左栏当前时刻随指标推进离开开始值
         assert _wait_until(qapp, lambda: len(chars()) >= 1, 6000), "角色应开口"
@@ -505,12 +505,12 @@ def test_gui_scene_time_clock_and_pause_resume(qapp, tmp_path):
 # ============================================================ 真实流速虚拟钟（worker）
 def _scene_near_boundary(tmp_path: Path, sub: str, start: str,
                          boundary: str = "22:00", desc: str = "打烊",
-                         name: str = "餐厅"):
+                         name: str = "贝克街221B"):
     """写一个 start 距 boundary 很近的场景（如 21:59→22:00），供加速自然收束用。"""
     scene, a, b, models = _write_fixture(tmp_path)
     scene.write_text(json.dumps({
         "name": name, "participants": ["甲", "乙"],
-        "circles": [{"id": "餐厅", "members": ["甲", "乙"]}],
+        "circles": [{"id": "贝克街221B", "members": ["甲", "乙"]}],
         "hard_boundary": {"type": "time", "value": boundary, "desc": desc},
         "start_time": start}, ensure_ascii=False), encoding="utf-8")
     return scene, a, b, models
@@ -688,16 +688,16 @@ def test_worker_natural_close_when_clock_crosses_boundary(qapp, tmp_path):
 
 
 def test_closing_line_is_built_from_scene_boundary_desc_and_translatable():
-    """收束合成行用**场景自己的**边界描述，且经 i18n 目录出字（不再写死餐厅措辞）。
+    """收束合成行用**场景自己的**边界描述，且经 i18n 目录出字（不再写死贝克街221B措辞）。
 
-    场景模型是通用的（餐厅只是内置演示素材），收束行必须按场景的 hard_boundary.desc
-    生成；没有描述时给一句中性兜底（不出现「餐厅/打烊」这类题材词）。
+    场景模型是通用的（贝克街221B只是内置演示素材），收束行必须按场景的 hard_boundary.desc
+    生成；没有描述时给一句中性兜底（不出现「贝克街221B/打烊」这类题材词）。
     """
     assert closing_text("散场了", "zh-Hans") == "（散场了。）"
     fallback = closing_text(None, "zh-Hans")
     assert fallback == closing_text("   ", "zh-Hans"), "空白描述等同没有描述"
     assert fallback.startswith("（") and fallback.endswith("）")
-    assert "餐厅" not in fallback and "打烊" not in fallback, "兜底不得带餐厅绑定措辞"
+    assert "贝克街221B" not in fallback and "打烊" not in fallback, "兜底不得带贝克街221B绑定措辞"
 
     en = closing_text("the doors close", "en")
     assert "the doors close" in en
@@ -705,7 +705,7 @@ def test_closing_line_is_built_from_scene_boundary_desc_and_translatable():
 
 
 def test_worker_closing_line_comes_from_the_scene_not_restaurant_wording(qapp, tmp_path):
-    """非餐厅场景（边界描述「散场了」）到点收束时，补发的导演行用场景自己的措辞。"""
+    """非贝克街221B场景（边界描述「散场了」）到点收束时，补发的导演行用场景自己的措辞。"""
     scene_p, a_p, b_p, models_p = _scene_near_boundary(
         tmp_path, "rr_desc", "21:59", desc="散场了", name="教室")
     worker = SceneWorker()
@@ -721,8 +721,8 @@ def test_worker_closing_line_comes_from_the_scene_not_restaurant_wording(qapp, t
         closers = [m.get("content", "") for m in msgs
                    if m.get("speaker_type") == "director"]
         assert any("散场了" in c for c in closers), f"收束行应用场景边界描述：{closers}"
-        assert not any("打烊" in c or "餐厅" in c for c in closers), \
-            f"收束行不得写死餐厅措辞：{closers}"
+        assert not any("打烊" in c or "贝克街221B" in c for c in closers), \
+            f"收束行不得写死贝克街221B措辞：{closers}"
     finally:
         worker.shutdown(4000)
         assert not worker.isRunning()
@@ -933,7 +933,7 @@ def test_gui_cast_from_selection_renders_card_and_urge_row_per_selected(qapp, tm
     场景文件代表「新建场景 / 还没存过人的场次」，所选卡由此播种进场（§3.1）。
     """
     scene, a, b, models = _write_fixture(tmp_path)
-    scene.write_text(json.dumps({"name": "餐厅", "characters": [],
+    scene.write_text(json.dumps({"name": "贝克街221B", "characters": [],
                                  "hard_boundary": {"type": "time", "value": "22:00",
                                                    "desc": "打烊"}},
                                 ensure_ascii=False), encoding="utf-8")
@@ -993,7 +993,7 @@ def test_worker_message_time_stamps_present_and_non_decreasing(qapp, tmp_path):
 
 def test_gui_rate_combo_and_time_labels_update(qapp, tmp_path):
     """GUI 离屏：改流速档 → worker rate 生效；场景卡当前=HH:MM:SS、边界=22:00（无「剩余
-    到打烊」这类餐厅绑定行）；对白每行前缀带 HH:MM:SS。"""
+    到打烊」这类贝克街221B绑定行）；对白每行前缀带 HH:MM:SS。"""
     worker, win, msgs, statuses = _spawn_window(tmp_path, "rateui",
                                                 closing_at_block=100000,
                                                 opening="入夜。")
@@ -1022,7 +1022,7 @@ def test_gui_rate_combo_and_time_labels_update(qapp, tmp_path):
         assert win._boundary_value.text() == "22:00"
         left = _left_text(win)
         assert "剩余" not in left and "打烊" not in left, \
-            "左栏不得再有「剩余到打烊」/「打烊」行（场景时间已并入场景卡且去餐厅绑定）"
+            "左栏不得再有「剩余到打烊」/「打烊」行（场景时间已并入场景卡且去贝克街221B绑定）"
 
         # 对白前缀 HH:MM:SS（开场/角色行已带 time_hhmmss）。
         assert _wait_until(

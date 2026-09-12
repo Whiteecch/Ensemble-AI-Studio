@@ -165,7 +165,7 @@ def test_flush_dispatches_the_stream_pieces_before_the_block_message(qapp):
     worker.sig_message.connect(lambda m: events.append(("msg", m["speaker"])))
     engine = _FlushStub(
         [{"id": 1, "speaker": "甲", "speaker_type": "character",
-          "content": "你好，世界。", "in_scene": "餐厅", "turn": 0}],
+          "content": "你好，世界。", "in_scene": "贝克街221B", "turn": 0}],
         _pieces("甲", ["你好", "，世界。"], settled=True))
 
     asyncio.run(worker._flush(engine))
@@ -311,8 +311,8 @@ def _make_window(tmp_path: Path, *, settings: AppSettings | None = None):
         p.write_text(json.dumps({"name": name, "personality": {"描述": "示例"}},
                                 ensure_ascii=False), encoding="utf-8")
         card_paths.append(p)
-    scene = scenes / "餐厅.json"
-    scene.write_text(json.dumps({"name": "餐厅", "participants": ["甲", "乙"]},
+    scene = scenes / "贝克街221B.json"
+    scene.write_text(json.dumps({"name": "贝克街221B", "participants": ["甲", "乙"]},
                                 ensure_ascii=False), encoding="utf-8")
     models = tmp_path / "models.yaml"
     models.write_text("think: {backend: stub, model: stub, params: {}}\n"
@@ -326,7 +326,7 @@ def _make_window(tmp_path: Path, *, settings: AppSettings | None = None):
     return win, worker
 
 
-def _open(win, worker, name: str = "餐厅") -> None:
+def _open(win, worker, name: str = "贝克街221B") -> None:
     """把窗口推进到「场景已开」（不需要引擎：载荷由测试自己造）。"""
     worker.sig_scene_info.emit({"scene": {"name": name, "participants": ["甲", "乙"]},
                                 "characters": [], "backend": "stub"})
@@ -445,7 +445,7 @@ def test_the_timestamp_is_there_from_the_very_first_frame(qapp, tmp_path, tmp_st
 
     before = win._view.toPlainText()
     worker.sig_message.emit({"id": 7, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1,
+                             "content": line, "in_scene": "贝克街221B", "turn": 1,
                              "time_hhmmss": "21:30:05"})
     assert win._view.toPlainText() == before, "正式消息到达那一帧逐字节不变（时间不跳）"
 
@@ -470,7 +470,7 @@ def test_message_is_held_and_swapped_in_at_the_last_tick(qapp, tmp_path, tmp_sto
     assert win._stream["text"] == line[:1]
 
     worker.sig_message.emit({"id": 7, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1,
+                             "content": line, "in_scene": "贝克街221B", "turn": 1,
                              "time_hhmmss": "21:30:05"})
     assert win._held_msg is not None, "吐字中到达的正式消息先扣住"
     assert [m.get("id") for m in win._conv_msgs] == [7], \
@@ -499,7 +499,7 @@ def test_streaming_html_is_byte_identical_to_the_official_bubble(qapp, tmp_path,
     _open(win, worker)
     line = "同一句话，同一套 HTML。"
     official = {"id": 8, "speaker": "甲", "speaker_type": "character",
-                "content": line, "in_scene": "餐厅", "turn": 1,
+                "content": line, "in_scene": "贝克街221B", "turn": 1,
                 "time_hhmmss": "21:30:05"}
     worker.sig_speak_delta.emit({"speaker": "甲", "text": line, "turn": 1, "seq": 1})
     worker.sig_speak_end.emit({"speaker": "甲", "settled": True, "turn": 1, "seq": 2})
@@ -600,7 +600,7 @@ def test_switching_speaker_mid_drip_leaves_no_residue(qapp, tmp_path, tmp_store)
 
     # 甲的正式消息到达 → 扣住 → 吐完换成正式行。
     worker.sig_message.emit({"id": 21, "speaker": "甲", "speaker_type": "character",
-                             "content": first, "in_scene": "餐厅", "turn": 1})
+                             "content": first, "in_scene": "贝克街221B", "turn": 1})
     while win._stream is not None:
         win._stream_tick()
     assert [m["id"] for m in win._conv_msgs if m.get("id")] == [21]
@@ -609,7 +609,7 @@ def test_switching_speaker_mid_drip_leaves_no_residue(qapp, tmp_path, tmp_store)
     worker.sig_speak_end.emit({"speaker": "乙", "settled": True, "turn": 2, "seq": 4})
     assert win._stream["speaker"] == "乙"
     worker.sig_message.emit({"id": 22, "speaker": "乙", "speaker_type": "character",
-                             "content": second, "in_scene": "餐厅", "turn": 2})
+                             "content": second, "in_scene": "贝克街221B", "turn": 2})
     while win._stream is not None:
         win._stream_tick()
 
@@ -648,7 +648,7 @@ def test_retraction_of_the_held_message_drops_the_bubble(qapp, tmp_path, tmp_sto
     _open(win, worker)
     line = _start_drip(win, worker)
     worker.sig_message.emit({"id": 11, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1})
+                             "content": line, "in_scene": "贝克街221B", "turn": 1})
     assert win._held_msg is not None
     worker.sig_retracted.emit(11)
     assert win._stream is None and win._held_msg is None
@@ -667,7 +667,7 @@ def test_scene_finish_keeps_the_held_line_and_stops_the_timer(qapp, tmp_path, tm
     _open(win, worker)
     line = _start_drip(win, worker)
     worker.sig_message.emit({"id": 31, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1})
+                             "content": line, "in_scene": "贝克街221B", "turn": 1})
     assert win._held_msg is not None
 
     worker.sig_finished.emit()
@@ -688,7 +688,7 @@ def test_authoritative_retraction_list_also_clears_the_held_bubble(qapp, tmp_pat
     _open(win, worker)
     line = _start_drip(win, worker)
     worker.sig_message.emit({"id": 12, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1})
+                             "content": line, "in_scene": "贝克街221B", "turn": 1})
     assert win._held_msg is not None
     worker.sig_narration.emit({"auto": False, "retracted": [12]})
     assert win._stream is None and win._held_msg is None
@@ -702,7 +702,7 @@ def test_local_truncation_drops_the_drip(qapp, tmp_path, tmp_store):
     win, worker = _make_window(tmp_path)
     _open(win, worker)
     worker.sig_message.emit({"id": 5, "speaker": "场景", "speaker_type": "narrator",
-                             "content": "夜里。", "in_scene": "餐厅", "turn": 0})
+                             "content": "夜里。", "in_scene": "贝克街221B", "turn": 0})
     line = _start_drip(win, worker, turn=1, seq=10)
     assert win._drop_from(5) is True
     assert win._stream is None and win._held_msg is None
@@ -740,7 +740,7 @@ def test_extreme_inputs_do_not_break_the_drip(qapp, tmp_path, tmp_store):
     worker.sig_speak_end.emit({"speaker": "甲", "settled": True, "turn": 1, "seq": 1})
     assert win._stream is None and win._stream_timer is None
     worker.sig_message.emit({"id": 1, "speaker": "甲", "speaker_type": "character",
-                             "content": "空片之后照旧。", "in_scene": "餐厅", "turn": 1})
+                             "content": "空片之后照旧。", "in_scene": "贝克街221B", "turn": 1})
     assert win._conv_msgs[-1]["id"] == 1, "没有气泡可扣 → 立即入留存（老路）"
 
     # 一个字：开吐那一跳即吐完（不画半成品帧，直接定格）
@@ -750,7 +750,7 @@ def test_extreme_inputs_do_not_break_the_drip(qapp, tmp_path, tmp_store):
     assert win._stream["text"] == "嗯"
     # 吐字早已走完时正式消息才到 → 就地定稿（不必等下一跳，更不会顶出第二条）
     worker.sig_message.emit({"id": 2, "speaker": "乙", "speaker_type": "character",
-                             "content": "嗯", "in_scene": "餐厅", "turn": 2})
+                             "content": "嗯", "in_scene": "贝克街221B", "turn": 2})
     assert win._conv_msgs[-1]["id"] == 2 and win._stream is None
     assert not _timer_active(win)
 
@@ -786,7 +786,7 @@ def test_no_ghost_bubble_when_the_message_lands_before_the_last_pieces(qapp, tmp
 
     # 正式消息先落地（权威文本），此刻根本不存在气泡 → 无从定稿。
     worker.sig_message.emit({"id": 3, "speaker": "甲", "speaker_type": "character",
-                             "content": "整句话。", "in_scene": "餐厅", "turn": 2})
+                             "content": "整句话。", "in_scene": "贝克街221B", "turn": 2})
     # 余片与收尾标记后到：都是**同一块**（同 speaker + 同 turn）。
     worker.sig_speak_delta.emit({"speaker": "甲", "text": "整句", "turn": 2, "seq": 5})
     worker.sig_speak_delta.emit({"speaker": "甲", "text": "话。", "turn": 2, "seq": 6})
@@ -811,7 +811,7 @@ def test_late_pieces_of_a_landed_block_do_not_extend_the_next_bubble(qapp, tmp_p
     _open(win, worker)
 
     worker.sig_message.emit({"id": 4, "speaker": "甲", "speaker_type": "character",
-                             "content": "第一句。", "in_scene": "餐厅", "turn": 2})
+                             "content": "第一句。", "in_scene": "贝克街221B", "turn": 2})
     worker.sig_speak_delta.emit({"speaker": "甲", "text": "第一句。", "turn": 2, "seq": 5})
     assert win._stream is None and win._stream_raw is None, "旧块的余片被拦下"
 
@@ -837,9 +837,9 @@ def test_a_landed_block_is_remembered_even_with_another_line_in_between(qapp, tm
     win, worker = _make_window(tmp_path)
     _open(win, worker)
     worker.sig_message.emit({"id": 1, "speaker": "甲", "speaker_type": "character",
-                             "content": "整句话。", "in_scene": "餐厅", "turn": 2})
+                             "content": "整句话。", "in_scene": "贝克街221B", "turn": 2})
     worker.sig_message.emit({"id": 2, "speaker": "乙", "speaker_type": "character",
-                             "content": "别的话。", "in_scene": "餐厅", "turn": 3})
+                             "content": "别的话。", "in_scene": "贝克街221B", "turn": 3})
     # 甲那一块的余片与收尾标记后到（同 speaker + 同 turn）
     worker.sig_speak_delta.emit({"speaker": "甲", "text": "整句话。", "turn": 2, "seq": 5})
     worker.sig_speak_end.emit({"speaker": "甲", "settled": True, "turn": 2, "seq": 6})
@@ -850,7 +850,7 @@ def test_a_landed_block_is_remembered_even_with_another_line_in_between(qapp, tm
     for i, name in enumerate(("乙", "乙"), start=1):
         worker.sig_message.emit({"id": 10 + i, "speaker": name,
                                  "speaker_type": "character",
-                                 "content": f"后面的话{i}。", "in_scene": "餐厅",
+                                 "content": f"后面的话{i}。", "in_scene": "贝克街221B",
                                  "turn": 3 + i})
     text = win._view.toPlainText()
     assert text.count("整句话。") == 1, "同一句只许出现一次（正式那条）"
@@ -870,13 +870,13 @@ def test_a_line_landing_mid_drip_keeps_the_engine_order(qapp, tmp_path, tmp_stor
     worker.sig_speak_delta.emit({"speaker": "甲", "text": line, "turn": 1, "seq": 1})
     worker.sig_speak_end.emit({"speaker": "甲", "settled": True, "turn": 1, "seq": 2})
     worker.sig_message.emit({"id": 6, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1,
+                             "content": line, "in_scene": "贝克街221B", "turn": 1,
                              "time_hhmmss": "21:30:05"})
     assert [m.get("id") for m in win._conv_msgs] == [6], "扣住的那条当刻入留存（位置已定）"
 
     # 吐字还没完，后发生的两条上屏了：一条场景叙述、一句用户插话（21:30:07）
     worker.sig_message.emit({"id": 7, "speaker": "场景", "speaker_type": "narrator",
-                             "content": "灯光暗了一格。", "in_scene": "餐厅", "turn": 1})
+                             "content": "灯光暗了一格。", "in_scene": "贝克街221B", "turn": 1})
     win._append_human("我先说一句。", "21:30:07")
     assert [m.get("id") for m in win._conv_msgs] == [6, 7, None], \
         "留存次序就是引擎次序：台词 → 叙述 → 插话"
@@ -908,10 +908,10 @@ def test_undo_of_a_later_line_never_eats_the_held_line(qapp, tmp_path, tmp_store
     worker.sig_speak_delta.emit({"speaker": "甲", "text": line, "turn": 1, "seq": 1})
     worker.sig_speak_end.emit({"speaker": "甲", "settled": True, "turn": 1, "seq": 2})
     worker.sig_message.emit({"id": 51, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1,
+                             "content": line, "in_scene": "贝克街221B", "turn": 1,
                              "time_hhmmss": "21:30:05"})
     worker.sig_message.emit({"id": 52, "speaker": "场景", "speaker_type": "narrator",
-                             "content": "灯光暗了一格。", "in_scene": "餐厅", "turn": 1})
+                             "content": "灯光暗了一格。", "in_scene": "贝克街221B", "turn": 1})
     while win._stream is not None and not win._stream_exhausted():
         win._stream_tick()
 
@@ -927,12 +927,12 @@ def test_truncation_before_the_drip_still_drops_it(qapp, tmp_path, tmp_store):
     win, worker = _make_window(tmp_path)
     _open(win, worker)
     worker.sig_message.emit({"id": 5, "speaker": "场景", "speaker_type": "narrator",
-                             "content": "夜里。", "in_scene": "餐厅", "turn": 0})
+                             "content": "夜里。", "in_scene": "贝克街221B", "turn": 0})
     line = "甲的一句够长的话，好让吐字停在半路中间。"
     worker.sig_speak_delta.emit({"speaker": "甲", "text": line, "turn": 1, "seq": 9})
     worker.sig_speak_end.emit({"speaker": "甲", "settled": True, "turn": 1, "seq": 10})
     worker.sig_message.emit({"id": 6, "speaker": "甲", "speaker_type": "character",
-                             "content": line, "in_scene": "餐厅", "turn": 1})
+                             "content": line, "in_scene": "贝克街221B", "turn": 1})
     assert win._drop_from(5) is True
     assert win._stream is None and win._held_msg is None
     assert not _timer_active(win), "截断之后定时器还在动界面 = 残句重影"
@@ -953,7 +953,7 @@ def test_streaming_off_leaves_the_window_without_any_temp_bubble(qapp, tmp_path,
     win._view.setHtml = lambda h: (rendered.append(h), orig(h))[1]
 
     worker.sig_message.emit({"id": 1, "speaker": "甲", "speaker_type": "character",
-                             "content": "老路径。", "in_scene": "餐厅", "turn": 1,
+                             "content": "老路径。", "in_scene": "贝克街221B", "turn": 1,
                              "time_hhmmss": "21:30:00"})
     assert rendered == ["".join(win._format_message(m) for m in win._conv_msgs)], \
         "流式关着：渲染输入 = 留存的正式 HTML 拼接（没有任何吐字形态）"
@@ -1013,13 +1013,13 @@ def test_worker_build_engine_passes_the_stream_flag(tmp_path, monkeypatch, qapp)
 
 
 def _write_fixture(tmp_path: Path):
-    scene = tmp_path / "餐厅.json"
+    scene = tmp_path / "贝克街221B.json"
     a = tmp_path / "丙.json"
     b = tmp_path / "丁.json"
     models = tmp_path / "models.yaml"
     scene.write_text(json.dumps({
-        "name": "餐厅", "participants": ["丙", "丁"],
-        "circles": [{"id": "餐厅", "members": ["丙", "丁"]}],
+        "name": "贝克街221B", "participants": ["丙", "丁"],
+        "circles": [{"id": "贝克街221B", "members": ["丙", "丁"]}],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     a.write_text(json.dumps({"name": "丙", "personality": {"描述": "冷静"}},

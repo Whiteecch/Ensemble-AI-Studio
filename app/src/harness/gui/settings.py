@@ -25,15 +25,17 @@ from __future__ import annotations
 
 import json
 import math
-import os
-import sys
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any
 
-# 用户数据目录名（Windows: %APPDATA%/<此名>/settings.json；其余: ~/.config/<此名>/…）
-APP_DIR_NAME = "文字创作agent"
-SETTINGS_FILE_NAME = "settings.json"
+from .. import paths as paths_mod
+from ..paths import APP_DIR_NAME, SETTINGS_FILE_NAME  # noqa: F401 - 单一出处（paths）
+
+# 用户数据目录名与文件名都在 `harness.paths` 里（**唯一出处**）：本模块不再自带一份
+# `APP_DIR_NAME` 与平台分支，只复用 `paths.user_dir()`——两处各写一份必然有一天分叉，
+# 那时设置会写到一个"软件不再读"的目录里，表现为"改了设置不生效"。上面那两条 import
+# 只是把名字继续挂在 `settings` 上（既有引用照旧可用）。
 
 THEMES: tuple[str, ...] = ("默认", "深色", "白色", "深蓝")
 LANGUAGES: tuple[str, ...] = ("zh-Hans", "zh-Hant", "en", "fr", "de", "ja", "ko")
@@ -193,38 +195,68 @@ class AppSettings:
 
 
 def default_settings_path() -> Path:
-    """默认设置文件：用户数据目录 + 固定子目录（跨平台，绝不在仓库内）。"""
-    if sys.platform == "win32":
-        base = os.environ.get("APPDATA") or ""
-        root = Path(base) if base.strip() else Path.home() / "AppData" / "Roaming"
-    else:
-        base = os.environ.get("XDG_CONFIG_HOME") or ""
-        root = Path(base) if base.strip() else Path.home() / ".config"
-    return root / APP_DIR_NAME / SETTINGS_FILE_NAME
+    """默认设置文件 = **用户数据目录**下的 `settings.json`（跨平台，绝不在仓库内）。
+
+    与 `harness.paths.user_dir()` **同源**：平台三分支与目录名只有 `paths` 那一份。这里
+    每次都现调 `paths_mod.user_dir()`（不是在 import 时算死），故 monkeypatch 它就能连
+    设置一起关进沙箱——"绝不写真实用户目录"这条纪律靠的正是这一点。
+    """
+    return paths_mod.user_dir() / SETTINGS_FILE_NAME
+
+
+def legacy_settings_paths() -> tuple[Path, ...]:
+    """**只读**兼容用的旧设置文件候选（改名前的用户目录，见 `paths.LEGACY_APP_DIR_NAMES`）。
+
+    目录名统一到 `Ensemble-AI-Studio`（§1.1）之后，老用户那份 settings.json 就落在新落点
+    之外：只读新落点 = 已填过的 api_key/主题/语言静默回默认（api_key 没了还会悄悄退回离线
+    stub），而旧文件一直躺在原地既不报错也不被读。故新文件读不到时逐个回落**读**这里——
+    写永远写新落点、旧文件不删不动（用户想清自己清）。
+    """
+    return tuple(d / SETTINGS_FILE_NAME for d in paths_mod.legacy_user_dirs())
 
 
 class SettingsStore:
     """settings.json 的读写门面；任何读失败都回落默认值。"""
 
     def __init__(self, path: Path | None = None) -> None:
+        #: 是否由调用方**显式**指定了文件（显式=不启用改名兼容回落，见 `_read_candidates`）。
+        self._explicit: bool = path is not None
         self.path: Path = Path(path) if path is not None else default_settings_path()
 
     # ------------------------------------------------------------- 读
+    def _read_candidates(self) -> tuple[Path, ...]:
+        """`load()` 的读候选（按优先级）：**显式给的路径只认它自己**，缺省路径才带兼容回落。
+
+        显式路径（`SettingsStore(p)`）是调用方指定的那一份，不该"顺带"去读用户旧目录——那会让
+        `p` 指哪儿都读得到别处的设置，也让测试设的隔离目录形同虚设。缺省路径则相反：它就是
+        "用户的那份设置"，改名后的新旧两处都要看（新优先）。
+        """
+        if self._explicit:
+            return (self.path,)
+        return (self.path, *legacy_settings_paths())
+
     def load(self) -> AppSettings:
-        """读取设置；文件缺失/损坏/非法一律返回默认值，不抛异常也不写盘。
+        """读取设置；候选逐个尝试，全都不成则返回默认值，不抛异常也不写盘。
 
         **from_dict 也在 try 内**：设置文件是用户可手改的文本，任何字段的转换都可能
         在坏输入上抛（如 `{"autosave_every": "²"}`）——而 load() 是在 app.py 里、
         QApplication 之前调用的，抛出去直接把软件挡在启动门外。故这里兜底为
-        「绝不抛」：读盘、解析、还原三步的任一异常都回落整份默认值。
+        「绝不抛」：读盘、解析、还原三步的任一异常都回落默认值。
+
+        候选顺序（`_read_candidates`）：新落点 → 旧落点（改名兼容，只读）。**新文件损坏时
+        也继续试旧文件**：损坏的新文件不该连带把用户填过的 api_key 一起丢掉。旧文件只在
+        "新落点读不出可用设置"时被读到；下一次 `save()/update()` 自然整份写进新落点，旧文件
+        原样留着——这就是本次改名唯一的那条迁移路径（不做自动搬迁：load() 不写盘）。
         """
-        try:
-            raw = self.path.read_text(encoding="utf-8")
-            data = json.loads(raw)
-            return AppSettings.from_dict(data)
-        except Exception:  # noqa: BLE001 - 脏设置文件绝不能把软件挡在启动门外
-            # 缺失、无权限、是目录、编码错、JSON 语法错、字段转换异常 → 全部回落默认
-            return AppSettings()
+        for candidate in self._read_candidates():
+            try:
+                raw = candidate.read_text(encoding="utf-8")
+                data = json.loads(raw)
+                return AppSettings.from_dict(data)
+            except Exception:  # noqa: BLE001 - 脏设置文件绝不能把软件挡在启动门外
+                # 缺失、无权限、是目录、编码错、JSON 语法错、字段转换异常 → 试下一个候选
+                continue
+        return AppSettings()
 
     # ------------------------------------------------------------- 写
     def save(self, s: AppSettings) -> Path:

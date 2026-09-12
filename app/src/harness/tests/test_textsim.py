@@ -32,7 +32,7 @@ def test_ratio_low_for_clearly_different_content():
 
 # ---------------------------------------------------------------- speak-node 抑制
 def _scene():
-    return Scene(name="餐厅", participants=["乙", "丙"])
+    return Scene(name="贝克街221B", participants=["乙", "丙"])
 
 
 def _cards():
@@ -47,7 +47,7 @@ def _entry(urge: float) -> dict:
 
 def _opener_state():
     return {"messages": [{"id": 0, "speaker": "导演", "speaker_type": "director",
-                          "content": "（开局）", "in_scene": "餐厅", "turn": 0}],
+                          "content": "（开局）", "in_scene": "贝克街221B", "turn": 0}],
             "urges": {}, "current_speaker": None, "turn": 0, "silent_streak": 0,
             "decided": None, "injected": [], "blocks": 0, "closed": False}
 

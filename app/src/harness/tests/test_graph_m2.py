@@ -12,7 +12,7 @@ def _two_role_fixture() -> tuple[dict, Scene, dict]:
         "甲": CharacterCard(name="甲", personality={"描述": "冷静"}),
         "乙": CharacterCard(name="乙", personality={"描述": "锐利"}),
     }
-    scene = Scene(name="餐厅", participants=["甲", "乙"])
+    scene = Scene(name="贝克街221B", participants=["甲", "乙"])
     backends = {
         "think": StubBackend(json_script=[
             {"aroused": 0.5, "obligation_fulfilled": [], "goal_progress": 0.0,
@@ -30,7 +30,7 @@ def test_m2_two_role_offline_dialogue(tmp_path):
     # 导演开场（一条 director 消息）进入 messages
     asyncio.run(graph.ainvoke({
         "messages": [{"id": 0, "speaker": "导演", "speaker_type": "director",
-                      "content": "你二人在餐厅临窗而坐。", "in_scene": "餐厅", "turn": 0}],
+                      "content": "你二人在贝克街221B临窗而坐。", "in_scene": "贝克街221B", "turn": 0}],
         "urges": {}, "current_speaker": None, "turn": 0, "silent_streak": 0,
     }, config={"configurable": {"thread_id": "demo1"}, "max_concurrency": 4}))
 

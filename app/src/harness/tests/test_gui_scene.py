@@ -51,12 +51,12 @@ def qapp():
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, list[Path], Path]:
     """二人场（硬边界 22:00）+ think/speak/narrate 三档 stub 模型。"""
-    scene = tmp_path / "餐厅.json"
+    scene = tmp_path / "贝克街221B.json"
     cards = [tmp_path / "甲.json", tmp_path / "乙.json"]
     models = tmp_path / "models.yaml"
     scene.write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
-        "circles": [{"id": "餐厅", "members": ["甲", "乙"]}],
+        "name": "贝克街221B", "participants": ["甲", "乙"],
+        "circles": [{"id": "贝克街221B", "members": ["甲", "乙"]}],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     for p, desc in zip(cards, ("冷静", "锐利")):

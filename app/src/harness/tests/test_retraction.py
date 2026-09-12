@@ -19,7 +19,7 @@ def _cards():
 
 
 def _scene():
-    return Scene(name="餐厅", participants=["甲", "乙"])
+    return Scene(name="贝克街221B", participants=["甲", "乙"])
 
 
 def _think(urge: float) -> dict:
@@ -31,15 +31,15 @@ def _seed(retracted: list[int] | None = None) -> dict:
     """5 条历史：[1][2] 正常对话、[3] 乙那条被撤销、[4] 尾条（乙）。"""
     msgs = [
         {"id": 0, "speaker": "导演", "speaker_type": "director",
-         "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0},
+         "content": "（贝克街221B开场）", "in_scene": "贝克街221B", "turn": 0},
         {"id": 1, "speaker": "甲", "speaker_type": "character",
-         "content": "这家店我常来。", "in_scene": "餐厅", "turn": 1},
+         "content": "这家店我常来。", "in_scene": "贝克街221B", "turn": 1},
         {"id": 2, "speaker": "乙", "speaker_type": "character",
-         "content": "是吗。", "in_scene": "餐厅", "turn": 1},
+         "content": "是吗。", "in_scene": "贝克街221B", "turn": 1},
         {"id": 3, "speaker": "乙", "speaker_type": "character",
-         "content": "（这段叙述被用户撤销了。）", "in_scene": "餐厅", "turn": 1},
+         "content": "（这段叙述被用户撤销了。）", "in_scene": "贝克街221B", "turn": 1},
         {"id": 4, "speaker": "甲", "speaker_type": "character",
-         "content": "那就这么说定了。", "in_scene": "餐厅", "turn": 2},
+         "content": "那就这么说定了。", "in_scene": "贝克街221B", "turn": 2},
     ]
     return {"messages": msgs, "urges": {}, "current_speaker": None, "turn": 2,
             "silent_streak": 0, "decided": None, "injected": [],
@@ -93,7 +93,7 @@ def test_retracted_line_absent_from_think_and_speak_views(tmp_path, monkeypatch)
                               config={"configurable": {"thread_id": "retr1"},
                                       "max_concurrency": 4}))
 
-    assert think_view["甲"] == "[0] 导演: （餐厅开场）\n[1] 甲: 这家店我常来。\n[2] 乙: 是吗。\n[4] 甲: 那就这么说定了。"
+    assert think_view["甲"] == "[0] 导演: （贝克街221B开场）\n[1] 甲: 这家店我常来。\n[2] 乙: 是吗。\n[4] 甲: 那就这么说定了。"
     assert "[3]" not in think_view["乙"] and "[4]" in think_view["乙"]
     assert set(speak_view) == {"乙"}
     assert "[3]" not in speak_view["乙"] and "[4]" in speak_view["乙"]
@@ -136,7 +136,7 @@ def test_repeat_guard_ignores_retracted_own_lines(tmp_path):
     own = "那我把话说回去：胳膊先包上。"
     seed = _seed(retracted=[3])
     seed["messages"].append({"id": 4, "speaker": "甲", "speaker_type": "character",
-                             "content": own, "in_scene": "餐厅", "turn": 2})
+                             "content": own, "in_scene": "贝克街221B", "turn": 2})
     # 甲说过的同一句在 [4]（未撤销）→ 判为自我复读，不落盘
     assert graph_mod._is_near_repeat_of_own(seed["messages"], "甲", own) is True
     # 把 [4] 撤销 → 历史里再无此句，同一句不再算复读

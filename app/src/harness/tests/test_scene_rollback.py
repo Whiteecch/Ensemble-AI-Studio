@@ -38,8 +38,8 @@ def _think(urge: float) -> dict:
 
 def _build(tmp_path: Path, **kw) -> SceneEngine:
     """二人场 + 三档 stub：每块必有一句角色台词（括号占位，不参与复读判定）。"""
-    (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
+    (tmp_path / "贝克街221B.json").write_text(json.dumps({
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     for name in ("甲", "乙"):
@@ -53,7 +53,7 @@ def _build(tmp_path: Path, **kw) -> SceneEngine:
     bid = tmp_path / "bid.yaml"
     bid.write_text("interruption_threshold: 0.4\nspeak_threshold: 0.0\n"
                    "silence_k: 100000\n", encoding="utf-8")
-    eng = SceneEngine(tmp_path / "餐厅.json",
+    eng = SceneEngine(tmp_path / "贝克街221B.json",
                       [tmp_path / "甲.json", tmp_path / "乙.json"],
                       tmp_path / "models.yaml", run_root=tmp_path / "runs",
                       bid_path=bid, closing_at_block=200, **kw)

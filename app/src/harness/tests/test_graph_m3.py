@@ -7,7 +7,7 @@ from harness.tests.helpers import assert_public_only, last_state
 
 
 def _scene():
-    return Scene(name="餐厅", participants=["甲", "乙"])
+    return Scene(name="贝克街221B", participants=["甲", "乙"])
 
 
 def _cards():
@@ -33,7 +33,7 @@ def test_m3_interruption_yields_to_higher_urge(tmp_path):
 
     asyncio.run(graph.ainvoke(
         {"messages": [{"id": 0, "speaker": "导演", "speaker_type": "director",
-                       "content": "开局", "in_scene": "餐厅", "turn": 0}],
+                       "content": "开局", "in_scene": "贝克街221B", "turn": 0}],
          "urges": {}, "current_speaker": None, "turn": 0, "silent_streak": 0,
          "decided": None, "injected": []},
         config={"configurable": {"thread_id": "m3a"}, "max_concurrency": 4}))
@@ -58,7 +58,7 @@ def test_m3_silence_then_inject(tmp_path):
 
     asyncio.run(graph.ainvoke(
         {"messages": [{"id": 0, "speaker": "导演", "speaker_type": "director",
-                       "content": "开局", "in_scene": "餐厅", "turn": 0}],
+                       "content": "开局", "in_scene": "贝克街221B", "turn": 0}],
          "urges": {}, "current_speaker": None, "turn": 0, "silent_streak": 0,
          "decided": None, "injected": []},
         config={"configurable": {"thread_id": "m3b"}, "max_concurrency": 4}))
@@ -90,7 +90,7 @@ def test_m3_last_chunk_filtered_by_knows_per_listener(tmp_path, monkeypatch):
         "乙": CharacterCard(name="乙"),
         "丙": CharacterCard(name="丙"),
     }
-    scene = Scene(name="餐厅", participants=["甲", "乙", "丙"])
+    scene = Scene(name="贝克街221B", participants=["甲", "乙", "丙"])
     seen: dict[str, str] = {}
 
     def _spy(card, view_text, last_chunk_text, scene_text, **kw):
@@ -106,9 +106,9 @@ def test_m3_last_chunk_filtered_by_knows_per_listener(tmp_path, monkeypatch):
     asyncio.run(graph.ainvoke(
         {"messages": [
             {"id": 0, "speaker": "导演", "speaker_type": "director",
-             "content": "（餐厅开场，人来人往）", "in_scene": "餐厅", "turn": 0},
+             "content": "（贝克街221B开场，人来人往）", "in_scene": "贝克街221B", "turn": 0},
             {"id": 1, "speaker": "甲", "speaker_type": "character",
-             "content": "只告诉乙的密语：桌下递来的纸条", "in_scene": "餐厅",
+             "content": "只告诉乙的密语：桌下递来的纸条", "in_scene": "贝克街221B",
              "knows": ["甲", "乙"], "turn": 1},
         ],
          "urges": {}, "current_speaker": None, "turn": 1,
@@ -118,7 +118,7 @@ def test_m3_last_chunk_filtered_by_knows_per_listener(tmp_path, monkeypatch):
     # 乙（knows 内）应把密语最新条作为 last_chunk 收到，且带说话者归属（同 view 形式）
     assert seen.get("乙") == "[1] 甲: 只告诉乙的密语：桌下递来的纸条"
     # 丙（knows 外）绝不能被喂密语——只能看到自己可见的开场旧行（若非 None），同样带归属
-    assert seen.get("丙") == "[0] 导演: （餐厅开场，人来人往）"
+    assert seen.get("丙") == "[0] 导演: （贝克街221B开场，人来人往）"
     assert "密语" not in seen.get("丙", "")
 
 
@@ -153,9 +153,9 @@ def test_m3_last_chunk_carries_speaker_even_for_own_line(tmp_path, monkeypatch):
     asyncio.run(graph.ainvoke(
         {"messages": [
             {"id": 0, "speaker": "导演", "speaker_type": "director",
-             "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0},
+             "content": "（贝克街221B开场）", "in_scene": "贝克街221B", "turn": 0},
             {"id": 1, "speaker": "乙", "speaker_type": "character",
-             "content": "今晚这桌该我请。", "in_scene": "餐厅", "turn": 1},
+             "content": "今晚这桌该我请。", "in_scene": "贝克街221B", "turn": 1},
         ],
          "urges": {}, "current_speaker": None, "turn": 1,
          "silent_streak": 0, "decided": None, "injected": []},
@@ -207,7 +207,7 @@ def test_m3_own_last_reaches_think_when_same_speaker_may_continue(tmp_path, monk
     graph = build_graph(cards, scene, think, speak, run_root=tmp_path / "runs")
 
     opener = {"messages": [{"id": 0, "speaker": "导演", "speaker_type": "director",
-                            "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0}],
+                            "content": "（贝克街221B开场）", "in_scene": "贝克街221B", "turn": 0}],
               "urges": {}, "current_speaker": None, "turn": 0,
               "silent_streak": 0, "decided": None, "injected": []}
     asyncio.run(graph.ainvoke(dict(opener),

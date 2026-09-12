@@ -5,7 +5,7 @@
 里原样不动——文件名、schema、字段一个都不加；**运行起来的那部分状态**（转录、虚拟
 秒、已跑块数）另存为同目录 + 同名前缀的 sidecar：
 
-    餐厅.json  →  餐厅.json.runtime.json
+    贝克街221B.json  →  贝克街221B.json.runtime.json
 
 为什么是 sidecar 而不是塞回场景文件：
   · 旧版程序 / 手写场景 / 其它工具读场景文件完全不受影响（sidecar 缺席 = 全新开场）；
@@ -30,8 +30,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-#: sidecar 后缀：加在**完整场景文件名**之后（含 .json），故 `餐厅.json` →
-#: `餐厅.json.runtime.json`。用整名 + 后缀而非 `with_suffix`——后者会把 `.json`
+#: sidecar 后缀：加在**完整场景文件名**之后（含 .json），故 `贝克街221B.json` →
+#: `贝克街221B.json.runtime.json`。用整名 + 后缀而非 `with_suffix`——后者会把 `.json`
 #: 换成 `.runtime.json`，丢掉原名里的点（`a.b.json` 这类文件名会算错）。
 RUNTIME_SUFFIX = ".runtime.json"
 

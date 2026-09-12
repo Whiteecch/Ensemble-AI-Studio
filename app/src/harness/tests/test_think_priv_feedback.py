@@ -28,8 +28,8 @@ def _build_engine(tmp_path: Path, closing_at_block: int = 99,
                   dynamics_params=None) -> SceneEngine:
     """tmp 素材 + 引擎。故意不预建 run_root（首个 async 调用走 MemorySaver，
     单 asyncio.run 驱动；角色记忆文件仍真实落盘到 run_root/<角色>/）。"""
-    (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
+    (tmp_path / "贝克街221B.json").write_text(json.dumps({
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     (tmp_path / "甲.json").write_text(json.dumps(
@@ -41,7 +41,7 @@ def _build_engine(tmp_path: Path, closing_at_block: int = 99,
     (tmp_path / "models.yaml").write_text(
         "think:\n  backend: stub\n  model: stub\n  params: {}\n"
         "speak:\n  backend: stub\n  model: stub\n  params: {}\n", encoding="utf-8")
-    return SceneEngine(tmp_path / "餐厅.json",
+    return SceneEngine(tmp_path / "贝克街221B.json",
                        [tmp_path / "甲.json", tmp_path / "乙.json"],
                        tmp_path / "models.yaml", run_root=tmp_path / "runs",
                        closing_at_block=closing_at_block,
@@ -165,7 +165,7 @@ def test_think_log_entries_carry_full_thinkresult_and_heard(tmp_path: Path):
     first_white = log[0]
     # 块1 全员只看到开场导演行
     assert first_white["speaker"] == "甲"
-    assert first_white["heard"] == "夜晚的餐厅，二人临窗而坐。"
+    assert first_white["heard"] == "夜晚的贝克街221B，二人临窗而坐。"
     fields = first_white["result"]
     assert {"aroused", "obligation_fulfilled", "goal_progress", "addressed",
             "impression_of_speaker", "urge"} == set(fields)

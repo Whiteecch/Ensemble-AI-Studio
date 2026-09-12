@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from . import knowledgestore as store
+from . import paths as paths_mod
 from .engine import SceneEngine
 from .loaders import load_character_card
 
@@ -39,10 +40,14 @@ _SETTLE_POLICIES = {
 _SETTLE_POLICY_CHOICES = tuple(_SETTLE_POLICIES)
 
 # 内置演示素材缺省值：不传 --scene/--characters/--models 也能一条指令跑 demo。
-_DEFAULT_SCENE = Path("scenes/贝克街221B.json")
-_DEFAULT_CHARACTERS = [Path("characters/福尔摩斯.json"), Path("characters/华生.json")]
-_DEFAULT_MODELS = Path("config/models.yaml")
-_DEFAULT_BID_DEMO = Path("config/bid.demo.yaml")
+# **不再相对 cwd**（打包方案 §1.2）：相对 cwd 的默认值在"装到 Program Files 后从快捷方式
+# 启动"这类场景下必然找不到素材（cwd 可能是任何地方）。缺省一律问 `paths.resource_dir()`
+# ——开发态它正是仓库里的 `app/`，故从 `app/` 里跑 CLI 时解析结果与改造前**同一个文件**。
+_DEFAULT_SCENE = paths_mod.resource_dir() / "scenes" / "贝克街221B.json"
+_DEFAULT_CHARACTERS = [paths_mod.resource_dir() / "characters" / "福尔摩斯.json",
+                       paths_mod.resource_dir() / "characters" / "华生.json"]
+_DEFAULT_MODELS = paths_mod.resource_dir() / "config" / "models.yaml"
+_DEFAULT_BID_DEMO = paths_mod.resource_dir() / "config" / "bid.demo.yaml"
 
 #: `--libraries-root` 的「关」写法（§13.3）：显式写这几个之一等于**不启用信息库**，
 #: 与今天逐字节一致（一个字都不多打印）。空串也认——它是命令行上最自然的那句"不要"。
@@ -50,13 +55,17 @@ _LIBRARIES_OFF_WORDS = frozenset({"", "none", "off", "no", "false", "-", "关", 
 
 
 def _default_libraries_root() -> Path:
-    """信息库根的缺省落点：**仓库（安装目录）下的 `app/libraries`**（§13.3）。
+    """信息库根的缺省落点：`paths.materials_dir()/libraries`。
 
-    与 `gui/app.py` 定位素材用的是**同一套 `parents[3]` 惯例**（`gui/worker.py` 同）。
-    本模块在 `app/src/harness/` 下，故 app 根是 `parents[2]`；那里与 `scenes/`、
-    `characters/` 平级，本期信息库就落在同一层。
+    与 `scenes/`、`characters/` 同一层、同一个口径（`materials_dir()` 是"读写必须同址"
+    的枢纽）：**开发态 = 仓库里的 `app/libraries`**（既有数据原地不动，逐字节同址），
+    **冻结态 = 用户数据目录下的 `libraries/`**。
+
+    为什么必须跟过去：信息库根是**写**路径——首次播种、每场的副本、散场结算都会往里写。
+    留成"仓库/安装目录"的话，打包后装到 Program Files 下这些写操作会直接失败（onefile
+    更糟：写进退出即删的解压目录，重启就没）。
     """
-    return Path(__file__).resolve().parents[2] / "libraries"
+    return paths_mod.materials_dir() / "libraries"
 
 
 #: 缺省信息库根（隔离夹具会把它指到临时目录，故测试里不要把"缺省到底是哪儿"钉在这条常量上，
@@ -117,7 +126,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument("--scene", type=Path,
                     help="场景 JSON；缺省内置 scenes/贝克街221B.json")
     ap.add_argument("--characters", type=Path, nargs="+",
-                    help="角色卡 JSON；缺省内置 甲.json 乙.json")
+                    help="角色卡 JSON；缺省内置 福尔摩斯.json 华生.json")
     ap.add_argument("--models", type=Path,
                     help="models.yaml；缺省内置 config/models.yaml")
     ap.add_argument("--bid", type=Path)
@@ -299,18 +308,23 @@ async def _settle_after_scene(args: argparse.Namespace, engine: SceneEngine) -> 
 
 
 def _default_run_root(args: argparse.Namespace, demo: bool) -> Path:
-    """run_root 缺省：遗留 runs/；demo 每次唯一 runs/demo-<uuid>（相对 cwd）。
+    """run_root 缺省：**用户数据目录**下的 `runs/`（打包方案 §1.2：不再相对 cwd）。
 
-    demo 用唯一目录而非共享 runs/demo：AsyncSqliteSaver 按 run_root 落盘，
-    共享同一目录会在多次运行间累积转录（含开场与台词串场）。每场自带目录即
-    天然隔离，无需开场清空、绝不动显式 --run-root。
+    存档（转录、角色私有记忆、场景 sqlite）是**写**：装在 `Program Files` 里时 cwd 可能是
+    只读的安装目录，相对 cwd 落盘会直接失败。故缺省一律 `paths.runs_dir()`——与 GUI 同一
+    个落点（CLI 与 GUI 行为一致），卸载安装包也不影响，卸载默认保留（§三）。
+
+    demo 仍每场唯一（`runs/demo-<uuid>`）：AsyncSqliteSaver 按 run_root 落盘，共享同一
+    目录会在多次运行间累积转录（含开场与台词串场）。每场自带目录即天然隔离，无需开场清空、
+    绝不动显式 --run-root。
     """
     if args.run_root is not None:
         return Path(args.run_root)
+    base = paths_mod.runs_dir()
     if demo:
         import uuid
-        return Path("runs") / f"demo-{uuid.uuid4().hex[:8]}"
-    return Path("runs")
+        return base / f"demo-{uuid.uuid4().hex[:8]}"
+    return base
 
 
 async def _emit_new(engine: SceneEngine, start: int) -> int:

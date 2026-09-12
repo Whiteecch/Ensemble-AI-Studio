@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -561,10 +562,39 @@ def _cli_dirs(tmp_path: Path) -> list[str]:
             "--scenes-dir", str(tmp_path / "scenes")]
 
 
-def test_cli_default_dirs_are_the_app_material_dirs():
+def test_cli_default_dirs_are_the_app_material_dirs(monkeypatch):
+    """开发态缺省导入目标 = 仓库里的 `app/characters`、`app/scenes`——**与改造前逐字节同址**。
+
+    这是界面的「角色库/场景库」目录（缺省卡/场景所在处）：导入的卡当场就能在库里看到。
+    改造前这条就是本用例的原形（钉 `DEFAULT_CHARACTERS_DIR = _APP_DIR/"characters"`），
+    打包改造不许把它改掉——开发态的行为是本次的最高约束。
+    """
+    from harness import paths as paths_mod
+
+    monkeypatch.delattr(sys, "frozen", raising=False)
     app_dir = Path(import_cards.__file__).resolve().parents[3]
-    assert import_cards.DEFAULT_CHARACTERS_DIR == app_dir / "characters"
-    assert import_cards.DEFAULT_SCENES_DIR == app_dir / "scenes"
+    assert import_cards.default_characters_dir() == app_dir / "characters"
+    assert import_cards.default_scenes_dir() == app_dir / "scenes"
+    assert import_cards.default_characters_dir().is_absolute()
+    assert import_cards.default_characters_dir() == \
+        paths_mod.materials_dir() / "characters"
+
+
+def test_cli_default_dirs_move_to_user_dir_when_frozen(monkeypatch, tmp_path):
+    """冻结态缺省导入目标 = **用户数据目录**（§1.2），绝不写安装目录（那儿只读、升级还会覆盖）。
+
+    与 conftest 的沙箱夹具配合：`user_dir()` 指向的是一次性 tmp。
+    """
+    from harness import paths as paths_mod
+
+    app_dir = Path(import_cards.__file__).resolve().parents[3]
+    monkeypatch.setattr(paths_mod, "is_frozen", lambda: True)
+    assert import_cards.default_characters_dir() == paths_mod.user_dir() / "characters"
+    assert import_cards.default_scenes_dir() == paths_mod.user_dir() / "scenes"
+    for resolved in (import_cards.default_characters_dir(),
+                     import_cards.default_scenes_dir()):
+        assert paths_mod.user_dir() in resolved.parents
+        assert app_dir not in resolved.parents, "缺省绝不再指回仓库/安装目录"
 
 
 def test_cli_imports_and_reports(tmp_path, capsys):
@@ -1396,9 +1426,15 @@ def _cli_dirs_all(tmp_path: Path) -> list[str]:
             "--libraries-dir", str(tmp_path / "libraries")]
 
 
-def test_cli_default_libraries_dir_is_the_app_libraries_dir():
-    app_dir = Path(import_cards.__file__).resolve().parents[3]
-    assert import_cards.DEFAULT_LIBRARIES_DIR == app_dir / "libraries"
+def test_cli_default_libraries_dir_is_the_materials_libraries_dir():
+    """信息库根缺省与 characters/scenes 同一口径（`materials_dir()/libraries`）。
+
+    它是**写**路径（播种、每场副本、散场结算都往那儿写），故必须与素材同址分叉：
+    开发态 = 仓库里的 `app/libraries`（既有数据原地不动、与改造前逐字节同址），
+    冻结态 = 用户数据目录（安装目录只读，写进去必失败）。
+    """
+    from harness import paths as paths_mod
+    assert import_cards.default_libraries_dir() == paths_mod.materials_dir() / "libraries"
 
 
 def test_cli_imports_library_and_reports_chinese_kind(tmp_path, capsys):

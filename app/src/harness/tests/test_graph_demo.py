@@ -13,7 +13,7 @@ from harness.tests.helpers import assert_public_only, last_state
 
 
 def _scene():
-    return Scene(name="餐厅", participants=["甲", "乙"])
+    return Scene(name="贝克街221B", participants=["甲", "乙"])
 
 
 def _cards():
@@ -34,7 +34,7 @@ def _drive(graph, thread_id: str, blocks: int) -> dict:
     current_speaker，speak 节点更新过的在位者信息得以跨块延续）。"""
     asyncio.run(graph.ainvoke(
         {"messages": [{"id": 0, "speaker": "导演", "speaker_type": "director",
-                       "content": "开局", "in_scene": "餐厅", "turn": 0}],
+                       "content": "开局", "in_scene": "贝克街221B", "turn": 0}],
          "urges": {}, "current_speaker": None, "turn": 0, "silent_streak": 0,
          "decided": None, "injected": []},
         config={"configurable": {"thread_id": thread_id}, "max_concurrency": 4}))

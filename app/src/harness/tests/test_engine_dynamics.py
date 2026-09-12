@@ -16,8 +16,8 @@ from harness.engine import SceneEngine
 
 
 def _build(tmp_path: Path) -> SceneEngine:
-    (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["戊", "己"],
+    (tmp_path / "贝克街221B.json").write_text(json.dumps({
+        "name": "贝克街221B", "participants": ["戊", "己"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     for name in ("戊", "己"):
@@ -27,7 +27,7 @@ def _build(tmp_path: Path) -> SceneEngine:
     (tmp_path / "models.yaml").write_text(
         "think:\n  backend: stub\n  model: stub\n  params: {}\n"
         "speak:\n  backend: stub\n  model: stub\n  params: {}\n", encoding="utf-8")
-    return SceneEngine(tmp_path / "餐厅.json",
+    return SceneEngine(tmp_path / "贝克街221B.json",
                        [tmp_path / "戊.json", tmp_path / "己.json"],
                        tmp_path / "models.yaml", run_root=tmp_path / "runs",
                        closing_at_block=99)

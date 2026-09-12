@@ -270,14 +270,14 @@ def test_library_module_drops_circle_entirely():
 
 def test_default_scene_filename_is_a_safe_slug(tmp_path):
     """新建时的缺省文件名：场景名 → 安全 slug（非法字符/路径分隔符/前导点一律消化掉）。"""
-    assert lib.default_scene_filename("餐厅") == "餐厅.json"
+    assert lib.default_scene_filename("贝克街221B") == "贝克街221B.json"
     for raw in ("../逃逸", "a/b", "a\\b", ".hidden", "坏:名", "坏|名", "坏?名", "CON", ""):
         got = lib.default_scene_filename(raw, tmp_path)
         assert lib.scene_filename_error(got) == "", f"{raw!r} → {got!r} 不是合法文件名"
     assert lib.default_scene_filename("", tmp_path) == "场景.json"
     # 目录里已占用时自动让名（新建即能存下去，不覆盖别人的场景）
-    (tmp_path / "餐厅.json").write_text("{}", encoding="utf-8")
-    assert lib.default_scene_filename("餐厅", tmp_path) == "餐厅2.json"
+    (tmp_path / "贝克街221B.json").write_text("{}", encoding="utf-8")
+    assert lib.default_scene_filename("贝克街221B", tmp_path) == "贝克街221B2.json"
 
 
 def test_library_copy_rejects_unsafe_scene_copy_name(qapp, tmp_path, monkeypatch):
@@ -762,7 +762,7 @@ def test_hook_editor_accepts_the_short_alias_taught_by_the_old_placeholder(qapp)
 def test_reset_scene_runtime_is_pure():
     """重置场景的纯函数内核：配置一字不动、入场记录归零、入参不被改动。"""
     scene = Scene(
-        name="餐厅", date="2031-07-09", background="bg", description="桌椅",
+        name="贝克街221B", date="2031-07-09", background="bg", description="桌椅",
         description_mutable=True, plot_direction="摊牌",
         hooks=[Hook(id="h1", condition="到点", event_kind="scene",
                     scene_patch={"描述": "空"})],
@@ -776,7 +776,7 @@ def test_reset_scene_runtime_is_pure():
     assert out is not scene, "应返回副本"
     assert out.participants == ["甲", "乙"], "在场角色保留（§5：保留配置与在场角色）"
     assert [(m.entered_at, m.entered_round) for m in out.characters] == [("", 0), ("", 0)]
-    assert out.name == "餐厅" and out.date == "2031-07-09" and out.description == "桌椅"
+    assert out.name == "贝克街221B" and out.date == "2031-07-09" and out.description == "桌椅"
     assert out.description_mutable is True and out.plot_direction == "摊牌"
     assert out.hooks == scene.hooks and out.hard_boundary == scene.hard_boundary
     assert out.start_time == "21:30"
@@ -823,7 +823,7 @@ def test_library_is_scenes_only(qapp, tmp_path):
     """场景库只列场景（§3.3）：没有角色列表、没有角色按钮、也没有角色相关的守门。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     _write_chars(cdir, "甲", "乙")
-    _write_scene(sdir, "餐厅", ["甲", "乙"])
+    _write_scene(sdir, "贝克街221B", ["甲", "乙"])
     _write_scene(sdir, "空场", [])                    # 一个角色都没有的场景
 
     dlg = LibraryDialog(cdir, sdir)
@@ -837,11 +837,11 @@ def test_library_is_scenes_only(qapp, tmp_path):
     assert len(dlg.findChildren(QListWidget)) == 1
 
     shown = {dlg.scene_list.item(i).text() for i in range(dlg.scene_list.count())}
-    assert shown == {"餐厅", "空场"}, "应列出目录里的两个场景"
-    row = next(i for i in range(2) if dlg.scene_list.item(i).text() == "餐厅")
+    assert shown == {"贝克街221B", "空场"}, "应列出目录里的两个场景"
+    row = next(i for i in range(2) if dlg.scene_list.item(i).text() == "贝克街221B")
     assert Path(dlg.scene_list.item(row).data(Qt.ItemDataRole.UserRole)) \
-        == sdir / "餐厅.json"
-    assert dlg.scene_list.item(row).toolTip() == str(sdir / "餐厅.json"), "tooltip=路径"
+        == sdir / "贝克街221B.json"
+    assert dlg.scene_list.item(row).toolTip() == str(sdir / "贝克街221B.json"), "tooltip=路径"
 
 
 def test_library_shows_corrupt_scene_by_filename(qapp, tmp_path):
@@ -876,7 +876,7 @@ def test_library_selection_sets_chosen_scene_without_any_character_gate(qapp, tm
 def test_library_buttons_are_wired_to_the_same_actions(qapp, tmp_path, monkeypatch):
     """五个按钮 + 「打开」各自接到原来的那套函数上（只搬位置，不改行为）。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
-    _write_scene(sdir, "餐厅", [])
+    _write_scene(sdir, "贝克街221B", [])
     calls: list[str] = []
 
     def _spy(n: str):
@@ -908,31 +908,31 @@ def test_library_buttons_are_wired_to_the_same_actions(qapp, tmp_path, monkeypat
 def test_library_lists_duplicates_and_deletes_scenes(qapp, tmp_path, monkeypatch):
     """场景库的列举 → 复制出新文件（名带「副本」）→ 确认后删除只删文件。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
-    _write_scene(sdir, "餐厅", [])
+    _write_scene(sdir, "贝克街221B", [])
 
     dlg = LibraryDialog(cdir, sdir)
     dlg.scene_list.setCurrentRow(0)
     dlg.copy_scene()
 
     assert dlg.scene_list.count() == 2
-    idx = next(i for i in range(2) if dlg.scene_list.item(i).text() == "餐厅 副本")
+    idx = next(i for i in range(2) if dlg.scene_list.item(i).text() == "贝克街221B 副本")
     copy_path = Path(dlg.scene_list.item(idx).data(Qt.ItemDataRole.UserRole))
-    assert copy_path.exists() and copy_path != sdir / "餐厅.json"
-    assert load_scene(copy_path).name == "餐厅 副本"
+    assert copy_path.exists() and copy_path != sdir / "贝克街221B.json"
+    assert load_scene(copy_path).name == "贝克街221B 副本"
 
     monkeypatch.setattr(lib, "confirm", lambda *a, **k: True)
     dlg.scene_list.setCurrentRow(idx)
     dlg.delete_scene()
     assert not copy_path.exists(), "确认后应删除文件"
     assert dlg.scene_list.count() == 1
-    assert (sdir / "餐厅.json").exists(), "其余文件不受影响"
+    assert (sdir / "贝克街221B.json").exists(), "其余文件不受影响"
 
 
 # ---------------------------------------------------------------- 视觉语言（§3.6）
 def test_library_dialog_styling_comes_from_the_themed_sheet(qapp, tmp_path, monkeypatch):
     """深色主题下弹窗整份样式表 = `dialog_qss(深色)`：不残留浅色（不会白底黑字）。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
-    _write_scene(sdir, "餐厅", [])
+    _write_scene(sdir, "贝克街221B", [])
     qapp.setProperty("theme", "深色")
     try:
         dlg = LibraryDialog(cdir, sdir)
@@ -950,7 +950,7 @@ def test_dialogs_carry_no_emoji_in_their_texts(qapp, tmp_path):
     """§3.6 无 AI 味：各弹窗的标题/标签/按钮文案里不许有 emoji。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     _write_chars(cdir, "甲")
-    _write_scene(sdir, "餐厅", ["甲"])
+    _write_scene(sdir, "贝克街221B", ["甲"])
     dialogs = [
         LibraryDialog(cdir, sdir),
         SceneEditorDialog(None, sdir, cdir),
@@ -970,7 +970,7 @@ def test_validate_materials_cast_from_cards_uses_selection(tmp_path):
     拦（引擎会按选择改写演员表）；缺省 False 仍是「场景闭环」旧口径（回归）。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     chars = _write_chars(cdir, "甲", "乙")
-    scene = _write_scene(sdir, "餐厅", ["甲", "幽灵"])          # 幽灵没卡
+    scene = _write_scene(sdir, "贝克街221B", ["甲", "幽灵"])          # 幽灵没卡
     no_circle = sdir / "无圈.json"                              # 场景连圈都没写
     no_circle.write_text(json.dumps({"name": "无圈", "participants": ["幽灵"]}),
                          encoding="utf-8")
@@ -1013,7 +1013,7 @@ def test_mainwindow_switch_passes_cast_from_cards(qapp, tmp_path, monkeypatch):
     """窗口切场跟随 App 口径：start_scene 带 cast_from_cards=True（选中几人就几人在场）。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     chars = _write_chars(cdir, "甲", "乙", "丙")
-    scene = _write_scene(sdir, "餐厅", ["甲", "乙"])            # 场景只声明 2 人
+    scene = _write_scene(sdir, "贝克街221B", ["甲", "乙"])            # 场景只声明 2 人
     worker = _FakeWorker()
     cfg = AppConfig(scene=scene, characters=chars, models=tmp_path / "models.yaml",
                     bid=tmp_path / "bid.yaml", run_root=tmp_path / "runs",
@@ -1172,7 +1172,7 @@ def test_mainwindow_library_button_switches_scene(qapp, tmp_path, monkeypatch):
     """左栏「场景库…」按钮：选中另一套 → cfg 更新、对白区清空、worker 重投开场。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     old_chars = _write_chars(cdir, "甲", "乙")
-    old_scene = _write_scene(sdir, "餐厅", ["甲", "乙"])
+    old_scene = _write_scene(sdir, "贝克街221B", ["甲", "乙"])
     new_scene = _write_scene(sdir, "天台", ["乙"])
     new_chars = [cdir / "乙.json"]
     models = tmp_path / "models.yaml"
@@ -1217,7 +1217,7 @@ def test_mainwindow_refuses_switch_to_unlaunchable_materials(qapp, tmp_path,
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     chars = _write_chars(cdir, "甲", "幽灵")
     (cdir / "幽灵.json").write_text("{ 坏掉的卡", encoding="utf-8")   # 卡读不出来
-    scene = _write_scene(sdir, "餐厅", ["甲"])
+    scene = _write_scene(sdir, "贝克街221B", ["甲"])
     bad = _write_scene(sdir, "坏的", ["甲", "幽灵"])
     worker = _FakeWorker()
     cfg = AppConfig(scene=scene, characters=chars, models=tmp_path / "models.yaml",
@@ -1243,7 +1243,7 @@ def test_mainwindow_library_cancel_keeps_session(qapp, tmp_path, monkeypatch):
     """库对话框取消（Rejected）→ 什么都不换、不重投开场。"""
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     chars = _write_chars(cdir, "甲")
-    scene = _write_scene(sdir, "餐厅", ["甲"])
+    scene = _write_scene(sdir, "贝克街221B", ["甲"])
     worker = _FakeWorker()
     cfg = AppConfig(scene=scene, characters=chars, models=tmp_path / "models.yaml",
                     bid=tmp_path / "bid.yaml", run_root=tmp_path / "runs",

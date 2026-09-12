@@ -89,6 +89,8 @@ from typing import Any, Callable, Sequence
 from PySide6.QtCore import QThread, Signal
 
 from .. import knowledgestore as store
+from .. import paths as paths_mod
+from .. import paths as paths_mod
 from .. import sceneclock as sc
 from .. import scenestore as scenestore_mod
 from ..engine import SceneEngine
@@ -108,13 +110,13 @@ _V_TICK_S = 0.5
 
 
 def _default_libraries_root() -> Path:
-    """信息库根的缺省落点：**仓库（安装目录）下的 `app/libraries`**（§13.3）。
+    """信息库根的缺省落点：`paths.materials_dir()/libraries`（与 runner 同一口径）。
 
-    与 `gui/app.py` 定位素材（scenes/characters/config）用的是**同一套 `parents[3]`
-    惯例**——两个模块同深度，写死别的层级日后打包迁移会各指一处。本期信息库就落在
-    仓库内、与 `app/characters/` 同级；打包方案实施时它随其余用户数据一起搬。
+    **开发态 = 仓库里的 `app/libraries`**（既有数据原地不动），**冻结态 = 用户数据目录**。
+    必须跟过去：信息库根是**写**路径（播种、每场副本、散场结算），留在安装目录里在
+    Program Files 下会直接写失败。`SceneWorker.libraries_root` 是类属性，测试按可覆盖用。
     """
-    return Path(__file__).resolve().parents[3] / "libraries"
+    return paths_mod.materials_dir() / "libraries"
 
 
 #: 缺省信息库根（模块常量；`SceneWorker.libraries_root` 由它初始化，见那里的可覆盖说明）。
@@ -187,7 +189,7 @@ def _directory_cards(directory: Path | None) -> list[Path]:
 def closing_text(desc: str | None, language: str = DEFAULT_LANGUAGE) -> str:
     """时间硬边界到点的合成收束行（**纯函数**，便于单测）。
 
-    场景模型是通用的——「餐厅打烊」只是内置演示素材的边界描述。故收束行取**场景自己**
+    场景模型是通用的——「贝克街221B打烊」只是内置演示素材的边界描述。故收束行取**场景自己**
     的 `hard_boundary.desc`（如「散场了」「午休结束」），按当前界面语言出字；场景没写
     描述时给一句不含题材词的中性兜底（与 world 块钟兜底的「自动收束」文案不同，时间
     边界收束与块数兜底收束一眼可辨）。
@@ -542,7 +544,8 @@ class SceneWorker(QThread):
 
     # ------------------------------------------------------------ 公开 GUI API
     def start_scene(self, scene: Path, characters: list[Path], models_yaml: Path,
-                    live: bool, bid: Path, opening: str | None, run_root: Path,
+                    live: bool, bid: Path, opening: str | None,
+                    run_root: Path | None = None,
                     api_key: str | None = None,
                     closing_at_block: int | None = _DEFAULT_BLOCK_CEIL,
                     start_time: str | None = None,
@@ -561,6 +564,10 @@ class SceneWorker(QThread):
         characters_dir = **角色库目录**（§3.2）：引擎据此按需装卡（构造期补场景阵容缺的
         卡、运行期 add_character 现装卡），因此任何库中角色都能在任何时刻加入本场。缺省
         （None）＝ 已装载卡所在的目录——调用方只要给的是素材库里的卡，这个推断就对。
+
+        run_root = **存档根**（每场取其下唯一的 `app-<uuid>` 子目录）。缺省（None）＝
+        `paths.runs_dir()`——用户数据目录下的 runs/（§1.2）：存档是写，装在只读的安装目录
+        时必须另找可写落点。
         """
         characters = [Path(p) for p in characters]
         self._cfg = {
@@ -570,7 +577,8 @@ class SceneWorker(QThread):
             "bid": Path(bid) if bid is not None else None,
             "live": bool(live),
             "api_key": api_key,
-            "run_root": Path(run_root),
+            "run_root": (Path(run_root) if run_root is not None
+                         else paths_mod.runs_dir()),
             "closing_at_block": (None if closing_at_block is None
                                  else int(closing_at_block)),
             "start_time": start_time,

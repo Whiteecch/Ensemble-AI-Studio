@@ -4,6 +4,18 @@ runs/
 *.runtime.json
 *.sqlite
 
+# 打包产物与中间物（PyInstaller / Inno Setup）：scratch，绝不入库。
+# 特别注意 build/tmp-appdata —— 开发态自测会把 APPDATA 重定向到这里，里面可能是
+# 真实用户数据的副本，一旦入库就是泄露。
+build/
+dist/
+app/build/
+app/dist/
+dist-baseline/
+*.spec.bak
+packaging/work/
+packaging/dist/
+
 # Python
 __pycache__/
 *.py[cod]

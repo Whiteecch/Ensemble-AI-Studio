@@ -1,7 +1,7 @@
 """场景运行时存档 sidecar（scenestore，设计文档 §5 保存/续演）。
 
 覆盖四件事：
-  1) 路径换算：`餐厅.json` → `餐厅.json.runtime.json`，与场景文件名本身不撞名；
+  1) 路径换算：`贝克街221B.json` → `贝克街221B.json.runtime.json`，与场景文件名本身不撞名；
   2) 往返：带混合可选键（knows/address/time_hhmmss/额外键）的长转录 + 虚拟钟 +
      块数 + meta，存了再读**逐字节深等**；同时场景文件本体一个字节都不许动；
   3) 健壮性：缺失 / 空 / 坏 JSON / 顶层类型错 / 部分字段烂 → 空 bundle 或逐字段
@@ -36,7 +36,7 @@ from harness.scenestore import (
 )
 
 #: 场景文件本体（放 tmp_path，当「真实场景文件」用；sidecar 必须另起一个文件）。
-SCENE_NAME = "餐厅.json"
+SCENE_NAME = "贝克街221B.json"
 
 
 def _scene_file(tmp_path: Path) -> Path:
@@ -44,7 +44,7 @@ def _scene_file(tmp_path: Path) -> Path:
     return _write_scene(tmp_path / SCENE_NAME)
 
 
-def _scene_bytes(name: str = "餐厅") -> bytes:
+def _scene_bytes(name: str = "贝克街221B") -> bytes:
     """场景文件字节：固定内容，用于「保存 sidecar 后场景文件分毫未动」的比对。"""
     return json.dumps(
         {"name": name, "start_time": "21:30",
@@ -68,7 +68,7 @@ def _long_transcript(n: int = 200) -> list[dict]:
             "speaker": speakers[i % len(speakers)],
             "speaker_type": types[i % len(types)],
             "content": f"第 {i + 1} 句：文本含中文与 \"引号\" 和换行\n第二行",
-            "in_scene": "餐厅",
+            "in_scene": "贝克街221B",
             "turn": i // 2,
         }
         if i % 3 == 0:
@@ -87,18 +87,18 @@ def _long_transcript(n: int = 200) -> list[dict]:
 
 # ------------------------------------------------------------------ 路径换算 --
 def test_runtime_path_for_appends_suffix(tmp_path):
-    """`餐厅.json` → `餐厅.json.runtime.json`；同目录、不改场景文件名。"""
+    """`贝克街221B.json` → `贝克街221B.json.runtime.json`；同目录、不改场景文件名。"""
     scene = tmp_path / SCENE_NAME
     side = runtime_path_for(scene)
-    assert side == tmp_path / "餐厅.json.runtime.json"
-    assert side.name == "餐厅.json" + RUNTIME_SUFFIX
+    assert side == tmp_path / "贝克街221B.json.runtime.json"
+    assert side.name == "贝克街221B.json" + RUNTIME_SUFFIX
     assert side.parent == scene.parent
     assert str(side).endswith(RUNTIME_SUFFIX)
 
 
 def test_runtime_path_does_not_collide_with_scene_file(tmp_path):
     """sidecar 不是场景文件本身：两个不同场景各得其所，也不会互相覆盖。"""
-    a = tmp_path / "餐厅.json"
+    a = tmp_path / "贝克街221B.json"
     b = tmp_path / "咖啡厅.json"
     assert runtime_path_for(a) != a
     assert runtime_path_for(a) != runtime_path_for(b)
@@ -142,7 +142,7 @@ def test_save_leaves_scene_file_byte_identical(tmp_path):
 
     assert scene.read_bytes() == before
     assert os.stat(scene).st_mtime_ns == before_mtime
-    assert load_scene(scene).name == "餐厅"       # schema/文件名都没被改动
+    assert load_scene(scene).name == "贝克街221B"       # schema/文件名都没被改动
     assert runtime_path_for(scene).exists()       # 状态进的是 sidecar，不是场景文件
 
 
@@ -385,8 +385,8 @@ def test_scene_listing_hides_runtime_sidecar(tmp_path):
     from harness.loaders import list_scene_paths
     from harness.scenestore import RuntimeBundle, runtime_path_for, save_runtime
 
-    scene = tmp_path / "餐厅.json"
-    scene.write_text('{"name": "餐厅"}', encoding="utf-8")
+    scene = tmp_path / "贝克街221B.json"
+    scene.write_text('{"name": "贝克街221B"}', encoding="utf-8")
     assert list_scene_paths(tmp_path) == [scene]
 
     save_runtime(scene, RuntimeBundle(transcript=[{"id": 1}]))

@@ -13,7 +13,7 @@ from harness import runner
 
 
 def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
-    scene = tmp_path / "scenes" / "餐厅.json"
+    scene = tmp_path / "scenes" / "贝克街221B.json"
     a = tmp_path / "characters" / "甲.json"
     b = tmp_path / "characters" / "乙.json"
     models = tmp_path / "config" / "models.yaml"
@@ -21,7 +21,7 @@ def _write_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     a.parent.mkdir(parents=True, exist_ok=True)
     models.parent.mkdir(parents=True, exist_ok=True)
     scene.write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     a.write_text(json.dumps({"name": "甲", "personality": {"描述": "冷静"}},

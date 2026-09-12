@@ -9,7 +9,7 @@ from harness.schemas import Message
 from harness.visibility import view_for
 
 
-def m(id, speaker, content, in_scene="餐厅", knows=None, address=None, reply_to=None,
+def m(id, speaker, content, in_scene="贝克街221B", knows=None, address=None, reply_to=None,
       turn=0):
     return Message(id=id, speaker=speaker, content=content,
                    in_scene=in_scene, knows=knows, address=address,
@@ -18,28 +18,28 @@ def m(id, speaker, content, in_scene="餐厅", knows=None, address=None, reply_t
 
 # 1/2/4 是甲与乙的私密对话（knows 限制）；3 是同场景里别人说的公开句。
 MSG = [
-    m(1, "甲", "这桌就我们俩", in_scene="餐厅", knows=["甲", "乙"]),
-    m(2, "乙", "嘘，那边有耳", in_scene="餐厅", knows=["甲", "乙"]),
+    m(1, "甲", "这桌就我们俩", in_scene="贝克街221B", knows=["甲", "乙"]),
+    m(2, "乙", "嘘，那边有耳", in_scene="贝克街221B", knows=["甲", "乙"]),
     m(3, "丙", "（另一桌说）", in_scene="别的场景", knows=["丙", "丁"]),
-    m(4, "甲", "接上这句", in_scene="餐厅", knows=["甲", "乙"], reply_to=1),
+    m(4, "甲", "接上这句", in_scene="贝克街221B", knows=["甲", "乙"], reply_to=1),
 ]
 
 
 def test_knows_restricts_across_characters():
-    view = view_for(MSG, "乙", "餐厅")
+    view = view_for(MSG, "乙", "贝克街221B")
     ids = [x.id for x in view]
     assert 2 in ids and 4 in ids
 
 
 def test_knows_blocks_non_member():
-    # 丙在餐厅场景内，但桌A 对话 knows 均不放行 → 一条都看不到
-    view = view_for(MSG, "丙", "餐厅")
+    # 丙在贝克街221B场景内，但桌A 对话 knows 均不放行 → 一条都看不到
+    view = view_for(MSG, "丙", "贝克街221B")
     assert view == []
 
 
 def test_scene_axis_filters_by_space():
-    # 甲在餐厅，只看得到本场景的句子；in_scene="别的场景" 那句被在场轴挡住
-    view = view_for(MSG, "甲", "餐厅")
+    # 甲在贝克街221B，只看得到本场景的句子；in_scene="别的场景" 那句被在场轴挡住
+    view = view_for(MSG, "甲", "贝克街221B")
     ids = [x.id for x in view]
     assert 3 not in ids
     assert ids == [1, 2, 4]
@@ -52,13 +52,13 @@ def test_space_not_in_any_message_is_empty():
 
 def test_view_is_sorted_by_id():
     """乱序入参也按 id 升序出（视图/锚点都依赖「尾条 = 最高 id」）。"""
-    view = view_for(list(reversed(MSG)), "甲", "餐厅")
+    view = view_for(list(reversed(MSG)), "甲", "贝克街221B")
     assert [x.id for x in view] == [1, 2, 4]
 
 
 def test_reply_chain_stays_within_visible_set():
     # reply_to=1 的 4 号若能看到，说明其可见；这里验证可见集含祖先 1 号
-    view = view_for(MSG, "乙", "餐厅")
+    view = view_for(MSG, "乙", "贝克街221B")
     by_id = {x.id: x for x in view}
     assert by_id[4].reply_to in by_id  # 可见集内可回溯
 
@@ -74,20 +74,20 @@ def _turned():
 
 def test_since_round_drops_earlier_turns():
     """进场基线 2：turn < 2 的两句（1、2 号）全被丢掉，进场后的两句留下。"""
-    view = view_for(_turned(), "新人", "餐厅", since_round=2)
+    view = view_for(_turned(), "新人", "贝克街221B", since_round=2)
     assert [x.id for x in view] == [3, 4]
 
 
 def test_since_round_none_keeps_everything():
     """缺省 None = 不按进场过滤（既有行为逐字节不变）。"""
-    view = view_for(_turned(), "新人", "餐厅")
+    view = view_for(_turned(), "新人", "贝克街221B")
     assert [x.id for x in view] == [1, 2, 3, 4]
-    assert view == view_for(_turned(), "新人", "餐厅", since_round=None)
+    assert view == view_for(_turned(), "新人", "贝克街221B", since_round=None)
 
 
 def test_since_round_zero_keeps_everything():
     """0 = 有史以来全见（开场即在场的角色，或裸图默认）。"""
-    assert [x.id for x in view_for(_turned(), "甲", "餐厅", since_round=0)] == \
+    assert [x.id for x in view_for(_turned(), "甲", "贝克街221B", since_round=0)] == \
         [1, 2, 3, 4]
 
 
@@ -98,12 +98,12 @@ def test_since_round_stacks_with_knows_and_space():
         m(2, "甲", "公开句", turn=1),
         m(3, "丙", "别场的话", in_scene="别的场景", turn=2),
     ]
-    view = view_for(msgs, "新人", "餐厅", since_round=0)
+    view = view_for(msgs, "新人", "贝克街221B", since_round=0)
     assert [x.id for x in view] == [2], "knows 与在场轴照旧生效"
-    assert view_for(msgs, "新人", "餐厅", since_round=2) == []
+    assert view_for(msgs, "新人", "贝克街221B", since_round=2) == []
 
 
 def test_since_round_keeps_id_order():
     """进场过滤后仍按 id 升序（视图/锚点依赖「尾条 = 最高 id」）。"""
-    view = view_for(list(reversed(_turned())), "新人", "餐厅", since_round=1)
+    view = view_for(list(reversed(_turned())), "新人", "贝克街221B", since_round=1)
     assert [x.id for x in view] == [2, 3, 4]

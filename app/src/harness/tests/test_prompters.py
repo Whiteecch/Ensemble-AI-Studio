@@ -14,7 +14,7 @@ def _card() -> CharacterCard:
 
 def test_think_messages_contain_json_keyword_and_fields():
     msgs = build_think_messages(_card(), view_text="[1] 丙: 你好",
-                                last_chunk_text="你好", scene_text="餐厅，10 点打烊")
+                                last_chunk_text="你好", scene_text="贝克街221B，10 点打烊")
     blob = msgs[0]["content"] + msgs[1]["content"]
     assert "json" in blob.lower()          # DeepSeek json_object 硬性要求
     assert '"urge"' in blob                # 输出字段示例
@@ -31,7 +31,7 @@ def test_think_messages_insert_private_state_and_impressions_sections():
     """私有态/印象回喂：非空时插「近期状态」/「对ta印象」小节，且 JSON 收尾仍在。"""
     msgs = build_think_messages(
         _card(), view_text="[1] 丙: 你好", last_chunk_text="你好",
-        scene_text="餐厅，10 点打烊",
+        scene_text="贝克街221B，10 点打烊",
         state_text="唤醒 0.50 ｜ 目标推进 0.20 ｜ 被点名 丙 ｜ 兑现义务 无",
         impressions_text="对 丙 的印象：话里有话")
     user = msgs[1]["content"]
@@ -90,8 +90,8 @@ def test_think_user_template_places_attributed_last_chunk_into_built_message():
 def test_speak_view_lines_keep_speaker_tags_and_no_fabricated_reply():
     """speak 视图行带说话者；系统温言提示不要硬接显然说给别人的话。"""
     card = CharacterCard(name="丙", personality={"描述": "锐利"})
-    view = "[0] 导演: （餐厅开场）\n[1] 乙: 这话是说给丁的。"
-    msgs = build_speak_messages(card, view_text=view, scene_text="餐厅")
+    view = "[0] 导演: （贝克街221B开场）\n[1] 乙: 这话是说给丁的。"
+    msgs = build_speak_messages(card, view_text=view, scene_text="贝克街221B")
     user = msgs[1]["content"]
     assert "[0] 导演:" in user and "[1] 乙:" in user
     assert "硬接" in msgs[0]["content"]
@@ -198,7 +198,7 @@ def test_speak_messages_insert_own_state_and_impressions_section():
     """speak 补喂本人近期状态/想法：非空时在开口指令前插小节，身份/反复读规则不变。"""
     card = CharacterCard(name="乙", personality={"描述": "冷静"})
     msgs = build_speak_messages(
-        card, view_text="[1] 丙: 你好", scene_text="餐厅",
+        card, view_text="[1] 丙: 你好", scene_text="贝克街221B",
         state_text="唤醒 0.60 ｜ 目标推进 0.10 ｜ 被点名 无 ｜ 兑现义务 无",
         impressions_text="对 丙 的印象：她话里有话")
     system, user = msgs[0]["content"], msgs[1]["content"]
@@ -239,7 +239,7 @@ def test_speak_prev_line_section_when_present():
     card = CharacterCard(name="丙", personality={"描述": "锐利"})
     view = "[0] 导演: （开场）\n[1] 乙: 今晚这桌我请。\n[2] 乙 →丙: 你喝什么？"
     prev_line = "[2] 乙 →丙: 你喝什么？"
-    msgs = build_speak_messages(card, view_text=view, scene_text="餐厅",
+    msgs = build_speak_messages(card, view_text=view, scene_text="贝克街221B",
                                 prev_line_text=prev_line)
     user = msgs[1]["content"]
     assert "【此刻·上一句】" in user
@@ -263,7 +263,7 @@ def test_speak_prev_line_own_previous_uses_self_continuation_branch():
     card = CharacterCard(name="乙", personality={"描述": "冷静"})
     prev_line = "[7] 乙: 再加一碟花生。"
     view = "[6] 乙: 那就热的。\n" + prev_line
-    msgs = build_speak_messages(card, view_text=view, scene_text="餐厅",
+    msgs = build_speak_messages(card, view_text=view, scene_text="贝克街221B",
                                 own_previous=True, prev_line_text=prev_line)
     system, user = msgs[0]["content"], msgs[1]["content"]
     # 系统侧不再追加旧的"上一句是你自己说的"（已折叠进用户小节）
@@ -382,7 +382,7 @@ def test_think_user_headers_rename_to_whole_conversation_and_latest_line():
     """B：think 用户消息小节改名为「整场对话（自开场至今，逐条带说话人）」与
     「此刻最新的一句」，且旧标题不再出现（speak 侧标题不动）。"""
     msgs = build_think_messages(_card(), view_text="[1] 丙: 你好",
-                                last_chunk_text="[1] 丙: 你好", scene_text="餐厅")
+                                last_chunk_text="[1] 丙: 你好", scene_text="贝克街221B")
     user = msgs[1]["content"]
     assert "【整场对话（自开场至今，逐条带说话人）】" in user
     assert "【此刻最新的一句】" in user
@@ -492,7 +492,7 @@ def test_corpus_section_caps_to_eight_samples_and_trims_to_120():
 # 用户消息（私有内容只喂这名听众）；见下方「信息库注入」一节。
 
 _BG = "世界观：秋末的临江镇，这场雨停了就要散场。"
-_DESC = "餐厅靠窗第二桌；桌上一壶冷茶，窗外雨声很大。"
+_DESC = "贝克街221B靠窗第二桌；桌上一壶冷茶，窗外雨声很大。"
 _PLOT = "乙要把那张旧照片拿出来，但先别解释它是谁的。"
 _LANG = "你将使用简体中文回答。"
 _SCENE_KW = {"language_directive": _LANG, "background_text": _BG,
@@ -503,7 +503,7 @@ def test_think_scene_background_and_description_go_to_system_only():
     """场景背景/描述：非空 → 系统消息出【场景背景】/【场景描述】小节（带原文）；
     绝不漏进用户消息（用户侧只有剧情走向）。"""
     msgs = build_think_messages(_card(), view_text="[1] 丙: 你好",
-                                last_chunk_text="你好", scene_text="餐厅",
+                                last_chunk_text="你好", scene_text="贝克街221B",
                                 background_text=_BG, description_text=_DESC)
     system, user = msgs[0]["content"], msgs[1]["content"]
     assert f"【场景背景】{_BG}" in system
@@ -512,7 +512,7 @@ def test_think_scene_background_and_description_go_to_system_only():
 
 
 def test_speak_scene_background_and_description_go_to_system_only():
-    msgs = build_speak_messages(_card(), view_text="[1] 丙: 你好", scene_text="餐厅",
+    msgs = build_speak_messages(_card(), view_text="[1] 丙: 你好", scene_text="贝克街221B",
                                 background_text=_BG, description_text=_DESC)
     system, user = msgs[0]["content"], msgs[1]["content"]
     assert f"【场景背景】{_BG}" in system
@@ -1107,7 +1107,7 @@ _DIGEST = [("药铺的暗格", "药铺的暗格", "柜台下第三块砖是空�
 
 
 def _summary(**kw):
-    base = dict(view_text="[1] 丙: 今晚这桌我请。", scene_text="餐厅，10 点打烊")
+    base = dict(view_text="[1] 丙: 今晚这桌我请。", scene_text="贝克街221B，10 点打烊")
     base.update(kw)
     return build_summary_messages(_card(), **base)
 
@@ -1120,7 +1120,7 @@ def test_summary_messages_carry_card_scene_view_and_entry_digest():
     assert [m["role"] for m in msgs] == ["system", "user"]
     system, user = msgs[0]["content"], msgs[1]["content"]
     assert "你是角色 乙" in system and '"描述": "冷静、观察多"' in system
-    assert "【这一场】餐厅，10 点打烊" in user
+    assert "【这一场】贝克街221B，10 点打烊" in user
     assert "【在场的人】乙、丙" in user
     assert "[1] 丙: 今晚这桌我请。" in user
     assert "[[药铺的暗格]]" in user and "柜台下第三块砖是空的" in user

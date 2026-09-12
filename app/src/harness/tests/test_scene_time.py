@@ -44,12 +44,12 @@ class _FakeMonotonic:
 
 def _scene_files(tmp_path: Path, *, boundary: bool = True,
                  start_time: str | None = None) -> tuple[Path, Path, Path, Path]:
-    scene = {"name": "餐厅", "participants": ["甲", "乙"]}
+    scene = {"name": "贝克街221B", "participants": ["甲", "乙"]}
     if boundary:
         scene["hard_boundary"] = {"type": "time", "value": "22:00", "desc": "打烊"}
     if start_time is not None:
         scene["start_time"] = start_time
-    (tmp_path / "餐厅.json").write_text(json.dumps(scene, ensure_ascii=False),
+    (tmp_path / "贝克街221B.json").write_text(json.dumps(scene, ensure_ascii=False),
                                         encoding="utf-8")
     (tmp_path / "甲.json").write_text(
         json.dumps({"name": "甲", "personality": {"描述": "冷静"}},
@@ -60,7 +60,7 @@ def _scene_files(tmp_path: Path, *, boundary: bool = True,
     (tmp_path / "models.yaml").write_text(
         "think:\n  backend: stub\n  model: stub\n  params: {}\n"
         "speak:\n  backend: stub\n  model: stub\n  params: {}\n", encoding="utf-8")
-    return (tmp_path / "餐厅.json", tmp_path / "甲.json",
+    return (tmp_path / "贝克街221B.json", tmp_path / "甲.json",
             tmp_path / "乙.json", tmp_path / "models.yaml")
 
 
@@ -190,7 +190,7 @@ async def test_engine_cross_midnight_boundary_next_day_seconds(tmp_path):
     """23:50 开场、00:30 打烊 → 打烊在开场之后须 +86400（次日 00:30）。"""
     scene_p, a_p, b_p, models_p = _scene_files(tmp_path, boundary=False)
     scene_p.write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "hard_boundary": {"type": "time", "value": "00:30", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     eng = SceneEngine(scene_p, [a_p, b_p], models_p,

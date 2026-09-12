@@ -77,7 +77,7 @@ def _cards() -> dict[str, CharacterCard]:
 
 
 def _scene() -> Scene:
-    return Scene(name="餐厅", participants=["甲", "乙"])
+    return Scene(name="贝克街221B", participants=["甲", "乙"])
 
 
 def _cfg(thread: str) -> dict:
@@ -91,7 +91,7 @@ def _run_one(graph, thread: str, state: dict) -> None:
 
 def _opening_state() -> dict:
     return {"messages": [{"id": 0, "speaker": "导演", "speaker_type": "director",
-                          "content": "入夜。", "in_scene": "餐厅", "turn": 0}],
+                          "content": "入夜。", "in_scene": "贝克街221B", "turn": 0}],
             "urges": {}, "current_speaker": None, "turn": 0, "silent_streak": 0,
             "decided": None, "injected": []}
 
@@ -272,8 +272,8 @@ def _diff_count(expected: list, actual: list) -> int:
 def _build_two_cast(tmp_path: Path, **kw) -> SceneEngine:
     """二人场 + 三档 stub（think/speak 由调用方换成 Recorder）——对拍与流式共用。"""
     tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
+    (tmp_path / "贝克街221B.json").write_text(json.dumps({
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     for name in ("甲", "乙"):
@@ -286,7 +286,7 @@ def _build_two_cast(tmp_path: Path, **kw) -> SceneEngine:
     bid = tmp_path / "bid.yaml"
     bid.write_text("interruption_threshold: 4.0\nspeak_threshold: 0.0\n"
                    "silence_k: 100000\n", encoding="utf-8")
-    return SceneEngine(tmp_path / "餐厅.json",
+    return SceneEngine(tmp_path / "贝克街221B.json",
                        [tmp_path / "甲.json", tmp_path / "乙.json"],
                        tmp_path / "models.yaml", run_root=tmp_path / "runs",
                        bid_path=bid, closing_at_block=200, auto_narrate=False, **kw)

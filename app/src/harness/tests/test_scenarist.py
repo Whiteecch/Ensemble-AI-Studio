@@ -14,7 +14,7 @@ from harness.scenarist import (TOOL_CLOSE, TOOL_OPEN, ParsedNarration, SceneNudg
 
 def _line(content: str, speaker: str = "甲", kind: str = "character") -> dict:
     return {"id": 1, "speaker": speaker, "speaker_type": kind, "content": content,
-            "in_scene": "餐厅", "turn": 0}
+            "in_scene": "贝克街221B", "turn": 0}
 
 
 #: 真实转录里那句的四个改写版（四人各说一遍同一个 beat）。
@@ -165,7 +165,7 @@ def test_deterministic_and_does_not_mutate_input():
 # 设计文档 §3.1/§4.1③：`description_mutable` 的场景变化时"调工具"（桌椅 → 破碎的桌椅）。
 # ---------------------------------------------------------------------------
 
-_CLEAN = "餐厅里有一些桌椅。\n他推开门，风灌了进来。\n「打烊了。」侍者说。"
+_CLEAN = "贝克街221B里有一些桌椅。\n他推开门，风灌了进来。\n「打烊了。」侍者说。"
 
 
 def test_pure_narration_is_unchanged_and_yields_nothing():
@@ -178,11 +178,11 @@ def test_pure_narration_is_unchanged_and_yields_nothing():
 
 def test_directive_at_the_end_is_stripped_and_parsed():
     """收在末尾的 set_description：正文不留痕，参数（中文标点/引号/首尾空格）精确取出。"""
-    raw = _CLEAN + "\n[[TOOL:set_description]]   餐厅里有一些破碎的桌椅，到处都是战斗后的痕迹。   "
+    raw = _CLEAN + "\n[[TOOL:set_description]]   贝克街221B里有一些破碎的桌椅，到处都是战斗后的痕迹。   "
     p = parse_narration(raw)
     assert p.text == _CLEAN
     assert p.tools == [SceneToolCall("set_description",
-                                     "餐厅里有一些破碎的桌椅，到处都是战斗后的痕迹。")]
+                                     "贝克街221B里有一些破碎的桌椅，到处都是战斗后的痕迹。")]
     assert p.malformed == []
     assert TOOL_OPEN not in p.text
 
@@ -197,37 +197,37 @@ def test_argument_is_verbatim_apart_from_outer_strip():
 
 def test_directive_in_the_middle_keeps_both_sides_in_order():
     """夹在中间的指令：前后两段叙述都留着、顺序不变，指令行（连同它占的整行）消失。"""
-    raw = "他推开门。\n[[TOOL:set_description]] 餐厅里有一些破碎的桌椅。\n侍者抬起头。"
+    raw = "他推开门。\n[[TOOL:set_description]] 贝克街221B里有一些破碎的桌椅。\n侍者抬起头。"
     p = parse_narration(raw)
     assert p.text == "他推开门。\n侍者抬起头。"
-    assert p.tools == [SceneToolCall("set_description", "餐厅里有一些破碎的桌椅。")]
+    assert p.tools == [SceneToolCall("set_description", "贝克街221B里有一些破碎的桌椅。")]
     assert p.malformed == []
 
 
 def test_inline_directive_keeps_the_text_before_it():
     """行内指令（前有叙述）：标记之前的字留下，标记到行尾都归指令（参数不跨行）。"""
-    p = parse_narration("他推开门。[[TOOL:set_name]] 废墟餐厅\n侍者抬起头。")
+    p = parse_narration("他推开门。[[TOOL:set_name]] 废墟贝克街221B\n侍者抬起头。")
     assert p.text == "他推开门。\n侍者抬起头。"
-    assert p.tools == [SceneToolCall("set_name", "废墟餐厅")]
+    assert p.tools == [SceneToolCall("set_name", "废墟贝克街221B")]
 
 
 def test_two_directives_on_separate_lines_keep_order():
     """两行两条指令：都解析出来，顺序按出现先后（外壳改场景有先后语义）。"""
-    raw = ("[[TOOL:set_background]] 夜里的餐厅，只剩一盏灯\n叙述一。\n"
-           "[[TOOL:set_name]] 废墟餐厅\n叙述二。")
+    raw = ("[[TOOL:set_background]] 夜里的贝克街221B，只剩一盏灯\n叙述一。\n"
+           "[[TOOL:set_name]] 废墟贝克街221B\n叙述二。")
     p = parse_narration(raw)
-    assert p.tools == [SceneToolCall("set_background", "夜里的餐厅，只剩一盏灯"),
-                       SceneToolCall("set_name", "废墟餐厅")]
+    assert p.tools == [SceneToolCall("set_background", "夜里的贝克街221B，只剩一盏灯"),
+                       SceneToolCall("set_name", "废墟贝克街221B")]
     assert p.text == "叙述一。\n叙述二。"
     assert p.malformed == []
 
 
 def test_malformed_fragments_are_recorded_removed_and_never_raise():
     """畸形表：有开头没结尾 / 空名字 / 少冒号 / 名字非法字符 → 进 malformed 且不出现在 text。"""
-    for raw in ("[[TOOL]] 餐厅里有一些桌椅。",
-                "[[TOOL:]] 餐厅里有一些桌椅。",
-                "[[TOOL:set_description 餐厅里有一些桌椅。",
-                "[[TOOL:Set Description]] 餐厅里有一些桌椅。",
+    for raw in ("[[TOOL]] 贝克街221B里有一些桌椅。",
+                "[[TOOL:]] 贝克街221B里有一些桌椅。",
+                "[[TOOL:set_description 贝克街221B里有一些桌椅。",
+                "[[TOOL:Set Description]] 贝克街221B里有一些桌椅。",
                 "[[TOOL:set Description]]",
                 "[[TOOL]]"):
         p = parse_narration(raw)
@@ -272,10 +272,10 @@ def test_text_never_leaks_raw_syntax():
 
 def test_render_tool_call_round_trips_through_parse_narration():
     """render 出的指令必须能被 parse 原样读回（提示词里的语法示例才可信）。"""
-    for call in (SceneToolCall("set_description", "餐厅里有一些破碎的桌椅，到处都是战斗后的痕迹。"),
-                 SceneToolCall("set_name", "废墟餐厅"),
+    for call in (SceneToolCall("set_description", "贝克街221B里有一些破碎的桌椅，到处都是战斗后的痕迹。"),
+                 SceneToolCall("set_name", "废墟贝克街221B"),
                  SceneToolCall("append_description", ""),
-                 SceneToolCall("set_background", "夜里的餐厅")):
+                 SceneToolCall("set_background", "夜里的贝克街221B")):
         p = parse_narration(render_tool_call(call))
         assert p.tools == [call], call
         assert p.text == "" and p.malformed == []
@@ -283,7 +283,7 @@ def test_render_tool_call_round_trips_through_parse_narration():
 
 def test_render_tool_call_is_the_documented_syntax():
     """render 的字面形态钉住（提示词与 parse 的契约）：`[[TOOL:名字]] 参数`。"""
-    assert render_tool_call(SceneToolCall("set_name", "废墟餐厅")) == "[[TOOL:set_name]] 废墟餐厅"
+    assert render_tool_call(SceneToolCall("set_name", "废墟贝克街221B")) == "[[TOOL:set_name]] 废墟贝克街221B"
     assert render_tool_call(SceneToolCall("set_description", "")) == "[[TOOL:set_description]]"
 
 
@@ -310,21 +310,21 @@ def test_tools_prompt_block_states_syntax_and_every_mutable_field():
 
 def test_apply_tools_each_name_has_its_documented_effect():
     """四种工具各按契约生效，且返回新 dict。"""
-    patch = {"name": "餐厅", "description": "餐厅里有一些桌椅。", "background": "白天"}
-    out = apply_tools(patch, [SceneToolCall("set_description", "餐厅里有一些破碎的桌椅。"),
+    patch = {"name": "贝克街221B", "description": "贝克街221B里有一些桌椅。", "background": "白天"}
+    out = apply_tools(patch, [SceneToolCall("set_description", "贝克街221B里有一些破碎的桌椅。"),
                               SceneToolCall("set_background", "夜里"),
-                              SceneToolCall("set_name", "废墟餐厅")])
-    assert out == {"name": "废墟餐厅",
-                   "description": "餐厅里有一些破碎的桌椅。",
+                              SceneToolCall("set_name", "废墟贝克街221B")])
+    assert out == {"name": "废墟贝克街221B",
+                   "description": "贝克街221B里有一些破碎的桌椅。",
                    "background": "夜里"}
     assert out is not patch
 
 
 def test_append_description_joins_with_one_space():
     """追加：两边都非空时中间补一个空格（别粘成一坨）。"""
-    out = apply_tools({"description": "餐厅里有一些桌椅。"},
+    out = apply_tools({"description": "贝克街221B里有一些桌椅。"},
                       [SceneToolCall("append_description", "到处都是战斗后的痕迹。")])
-    assert out["description"] == "餐厅里有一些桌椅。 到处都是战斗后的痕迹。"
+    assert out["description"] == "贝克街221B里有一些桌椅。 到处都是战斗后的痕迹。"
 
 
 def test_append_description_on_empty_value_adds_no_stray_space():
@@ -332,31 +332,31 @@ def test_append_description_on_empty_value_adds_no_stray_space():
     for patch in ({}, {"description": ""}, {"description": None}):
         out = apply_tools(patch, [SceneToolCall("append_description", "只有一张桌子。")])
         assert out["description"] == "只有一张桌子。", patch
-    assert apply_tools({"description": "餐厅。"},
-                       [SceneToolCall("append_description", "")])["description"] == "餐厅。"
+    assert apply_tools({"description": "贝克街221B。"},
+                       [SceneToolCall("append_description", "")])["description"] == "贝克街221B。"
 
 
 def test_set_name_never_writes_path_or_filename():
     """名字只进 name：path/filename 是外壳的事，工具改不得（也拒绝 set_path 这类名字）。"""
-    patch = {"name": "餐厅", "path": "scenes/餐厅.md", "filename": "餐厅.md"}
-    out = apply_tools(patch, [SceneToolCall("set_name", "废墟餐厅"),
-                              SceneToolCall("set_path", "scenes/废墟餐厅.md"),
-                              SceneToolCall("set_filename", "废墟餐厅.md")])
-    assert out["name"] == "废墟餐厅"
-    assert out["path"] == "scenes/餐厅.md"
-    assert out["filename"] == "餐厅.md"
+    patch = {"name": "贝克街221B", "path": "scenes/贝克街221B.md", "filename": "贝克街221B.md"}
+    out = apply_tools(patch, [SceneToolCall("set_name", "废墟贝克街221B"),
+                              SceneToolCall("set_path", "scenes/废墟贝克街221B.md"),
+                              SceneToolCall("set_filename", "废墟贝克街221B.md")])
+    assert out["name"] == "废墟贝克街221B"
+    assert out["path"] == "scenes/贝克街221B.md"
+    assert out["filename"] == "贝克街221B.md"
 
 
 def test_unknown_tool_is_ignored():
     """不认识的工具名：忽略（不认识就不猜），其余照改。"""
-    patch = {"description": "餐厅。"}
+    patch = {"description": "贝克街221B。"}
     assert apply_tools(patch, [SceneToolCall("set_time", "打烊后"),
                                SceneToolCall("destroy_everything", "x")]) == patch
 
 
 def test_apply_tools_does_not_mutate_input_and_is_deterministic():
     """纯函数：调用方的 dict 不被改动，同样输入必得同样输出。"""
-    patch = {"description": "餐厅。", "name": "餐厅"}
+    patch = {"description": "贝克街221B。", "name": "贝克街221B"}
     before = dict(patch)
     calls = [SceneToolCall("set_description", "废墟。")]
     assert apply_tools(patch, calls) == apply_tools(patch, calls)

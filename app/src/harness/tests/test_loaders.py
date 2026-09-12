@@ -22,14 +22,14 @@ def _write(tmp_path: Path, name: str, data) -> Path:
 
 
 def test_load_scene_validates(tmp_path):
-    p = _write(tmp_path, "餐厅.json", {
-        "name": "餐厅", "participants": ["丁", "戊"],
+    p = _write(tmp_path, "贝克街221B.json", {
+        "name": "贝克街221B", "participants": ["福尔摩斯", "华生"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"},
     })
     scene = load_scene(p)
-    assert scene.name == "餐厅"
+    assert scene.name == "贝克街221B"
     assert scene.hard_boundary.value == "22:00"
-    assert scene.participants == ["丁", "戊"]
+    assert scene.participants == ["福尔摩斯", "华生"]
 
 
 def test_load_scene_without_any_cast_is_legal(tmp_path):
@@ -40,7 +40,7 @@ def test_load_scene_without_any_cast_is_legal(tmp_path):
 
 
 def test_load_character_card_defaults_weights(tmp_path):
-    p = _write(tmp_path, "丁.json", {"name": "丁", "personality": {"描述": "冷静"}})
+    p = _write(tmp_path, "福尔摩斯.json", {"name": "福尔摩斯", "personality": {"描述": "冷静"}})
     card = load_character_card(p)
     assert card.weights.w1_relevance == 0.5
     assert card.emotion_decay_rate == 0.4
@@ -100,11 +100,11 @@ def test_list_paths_missing_or_empty_dir_is_empty(tmp_path):
 def test_save_character_card_roundtrip(tmp_path):
     """save→load 恒等；UTF-8 不转义、缩进 2——把文件当 system prompt 的人眼可读。"""
     card = CharacterCard(
-        name="丁", personality={"描述": "冷静"},
+        name="福尔摩斯", personality={"描述": "冷静"},
         corpus={"source": "《示例作品》", "style": "短句", "thinking": "先观察",
                 "quirks": ["……"], "samples": ["今晚这桌，我请。"]},
     )
-    out = tmp_path / "新建目录" / "丁.json"
+    out = tmp_path / "新建目录" / "福尔摩斯.json"
     save_character_card(card, out)
     assert out.is_file()
     assert load_character_card(out) == card
@@ -118,8 +118,8 @@ def test_save_character_card_roundtrip(tmp_path):
 
 
 def test_save_scene_roundtrip(tmp_path):
-    scene = Scene(name="餐厅", participants=["丁", "戊"])
-    out = tmp_path / "餐厅.json"
+    scene = Scene(name="贝克街221B", participants=["福尔摩斯", "华生"])
+    out = tmp_path / "贝克街221B.json"
     save_scene(scene, out)
     assert load_scene(out) == scene
     assert out.read_text(encoding="utf-8").startswith("{\n  ")
@@ -151,7 +151,7 @@ def test_save_scene_roundtrips_every_new_field(tmp_path):
 def test_load_scene_legacy_and_unknown_keys_do_not_crash(tmp_path):
     """旧/未知键（circles、未来字段）既不炸也不进模型；participants 迁移进 characters。"""
     p = _write(tmp_path, "旧场景.json", {
-        "name": "餐厅", "participants": ["甲", "乙"],
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "circles": [{"id": "桌A", "members": ["甲", "乙"]}],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"},
         "未来的字段": {"随便": "什么都行"},
@@ -166,7 +166,7 @@ def test_load_scene_legacy_and_unknown_keys_do_not_crash(tmp_path):
 def _filename_cases() -> list[tuple[str, bool]]:
     """(文件名, 是否合法)——拒绝表与 gui/library.py::filename_error 同一套规则。"""
     return [
-        ("晚宴.json", True), ("餐厅 2.json", True), ("a.b.json", True),
+        ("晚宴.json", True), ("贝克街221B 2.json", True), ("a.b.json", True),
         ("", False), ("   ", False), (" 晚宴.json", False), ("晚宴.json ", False),
         (".hidden.json", False), ("..json", False), ("a..b.json", False),
         ("dir/晚宴.json", False), ("dir\\晚宴.json", False),
@@ -206,7 +206,7 @@ def test_scene_path_for_rejects_unsafe_names(tmp_path):
 # ------------------------------------- 以所选角色为准的演员表（cast_from_cards 纯变换） --
 def test_scene_with_cast_overrides_characters_in_given_order():
     """演员表 = 给定顺序（用户选卡顺序），写进 characters、入场记录从零起算。"""
-    out = scene_with_cast(Scene(name="餐厅", participants=["甲"]), ["丙", "甲", "乙"])
+    out = scene_with_cast(Scene(name="贝克街221B", participants=["甲"]), ["丙", "甲", "乙"])
     assert out.participants == ["丙", "甲", "乙"]
     assert [(m.name, m.entered_round, m.entered_at) for m in out.characters] == [
         ("丙", 0, ""), ("甲", 0, ""), ("乙", 0, "")]
@@ -221,7 +221,7 @@ def test_scene_with_cast_fills_cast_into_empty_scene():
 
 def test_scene_with_cast_leaves_original_scene_alone():
     """返回的是副本：原 Scene 的演员表/入场记录一字不改。"""
-    scene = Scene(name="餐厅",
+    scene = Scene(name="贝克街221B",
                   characters=[SceneCastMember(name="甲", entered_at="21:35",
                                               entered_round=3)])
     out = scene_with_cast(scene, ["丙", "甲"])
@@ -246,10 +246,10 @@ def test_shipped_cards_carry_usable_corpus():
         assert card.corpus.style and card.corpus.thinking
         assert len(card.corpus.samples) >= 3   # 够当 few-shot 风格锚点
         assert card.corpus.quirks
-        for msgs in (build_think_messages(card, view_text="[1] 戊: 你好",
-                                          last_chunk_text="你好", scene_text="餐厅"),
-                     build_speak_messages(card, view_text="[1] 戊: 你好",
-                                          scene_text="餐厅")):
+        for msgs in (build_think_messages(card, view_text="[1] 华生: 你好",
+                                          last_chunk_text="你好", scene_text="贝克街221B"),
+                     build_speak_messages(card, view_text="[1] 华生: 你好",
+                                          scene_text="贝克街221B")):
             system = msgs[0]["content"]
             assert "【语言风格】" in system and "绝不照抄样例内容或原句" in system
             assert f"【人物语料·出处】{card.corpus.source}" in system

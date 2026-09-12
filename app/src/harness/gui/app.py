@@ -31,16 +31,27 @@ import os
 import sys
 from pathlib import Path
 
-#: app/ 根（scenes/characters/config 所在目录），保证任意 cwd 下双击/模块启动都命中素材。
-_APP_DIR = Path(__file__).resolve().parents[3]
-_DEFAULT_SCENE = _APP_DIR / "scenes" / "餐厅.json"
+from .. import paths as paths_mod
+
+# 缺省素材与缺省存档根**不再自己算**（打包方案 §1.2）：素材一律问 `paths.materials_dir()`
+# ——开发态 = 仓库里的 `app/`（与改造前 `Path(__file__).parents[3]` 逐字节同址），冻结态 =
+# 用户目录下那份**可编辑副本**（启动时播种出来的）；**存档**一律落 `paths.user_dir()`
+# （安装目录只读，往那儿写必失败）。
+#
+# 素材为什么冻结态走用户目录而不是随包只读目录：**界面读哪、就要能写哪**。GUI 的
+# 「角色库/场景库」目录取自"当前场景/当前卡所在目录"（`MainWindow._characters_dir` /
+# `_scenes_dir`），新建角色、导入模板、引擎装卡都往那儿写。若缺省场景/卡指向安装目录，
+# 打包后这些写操作会直接撞 Program Files 的只读权限，而播种出的那份副本谁也读不到。
+#: 缺省演示场景（开发态=仓库素材；冻结态=用户目录里的可编辑副本）。
+_DEFAULT_SCENE = paths_mod.materials_dir() / "scenes" / "贝克街221B.json"
 _DEFAULT_CHARACTERS = [
-    _APP_DIR / "characters" / "甲.json",
-    _APP_DIR / "characters" / "乙.json",
+    paths_mod.materials_dir() / "characters" / "福尔摩斯.json",
+    paths_mod.materials_dir() / "characters" / "华生.json",
 ]
-_DEFAULT_MODELS = _APP_DIR / "config" / "models.yaml"
-_DEFAULT_BID = _APP_DIR / "config" / "bid.demo.yaml"
-_DEFAULT_RUN_ROOT = _APP_DIR / "runs"
+_DEFAULT_MODELS = paths_mod.materials_dir() / "config" / "models.yaml"
+_DEFAULT_BID = paths_mod.materials_dir() / "config" / "bid.demo.yaml"
+#: 缺省存档根：用户数据目录下的 runs/（转录与角色私有记忆都在这儿，装到只读目录后也写得进）。
+_DEFAULT_RUN_ROOT = paths_mod.runs_dir()
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -49,7 +60,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         description="多智能体角色扮演桌面端：角色自主持续对话，人类随时插话。")
     ap.add_argument("--scene", type=Path, help="场景 JSON；缺省内置 scenes/贝克街221B.json")
     ap.add_argument("--characters", type=Path, nargs="+",
-                    help="角色卡 JSON；缺省内置 甲.json 乙.json")
+                    help="角色卡 JSON；缺省内置 福尔摩斯.json 华生.json")
     ap.add_argument("--models", type=Path,
                     help="基础模型 yaml；缺省内置 config/models.yaml（live 自动切 "
                          "models.live.yaml）")
@@ -100,6 +111,10 @@ def run(argv: list[str] | None = None) -> int:
     from .worker import SceneWorker
 
     args = _parse_args(argv)
+    # 用户目录先建好并按需播种（§1.2/§三）：首次运行时 %APPDATA% 里还是空的，用户得有一份
+    # **可编辑**的素材底本；播种只做加法、不覆盖已有文件，故每次启动都调也幂等。放在读设置
+    # 之前——设置文件本身也住那儿。
+    paths_mod.ensure_user_dirs()
     # 用户设置先读（配色/语言/自动保存周期/api 配置）：素材类（场景/角色/模型/竞价）不
     # 覆盖任何 CLI 值——CLI 与内置素材仍是本场次的权威来源；**api 配置则以设置为主来源**
     # （§2.1①：用户填过 key 就该生效，不再要求环境变量）。优先级（高 → 低）：

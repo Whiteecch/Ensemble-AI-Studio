@@ -267,6 +267,10 @@ def test_default_settings_path_absolute_and_outside_repo():
 
 
 def test_default_settings_path_uses_user_data_dir(monkeypatch, tmp_path):
+    # conftest 的沙箱夹具把 paths.user_dir 整体指到了 tmp（防写真实用户目录）；本条要钉的
+    # 正是**环境变量分支**本身，故先把 user_dir 还原成真实实现（env 由本用例自己给）。
+    from harness import paths as paths_mod
+    monkeypatch.setattr(paths_mod, "user_dir", paths_mod._platform_user_dir)
     if sys.platform == "win32":
         monkeypatch.setenv("APPDATA", str(tmp_path))
         expected = tmp_path / APP_DIR_NAME / "settings.json"
@@ -303,6 +307,99 @@ def test_missing_file_returns_defaults_without_creating_it(tmp_path):
     store = SettingsStore(p)
     assert store.load() == AppSettings()
     assert not p.exists()  # 只读不落盘
+
+
+# --------------------------------------- 改名兼容：旧目录只读回落（§1.1 的迁移路径）
+def _write_legacy_settings(tmp_path: Path, **fields) -> Path:
+    """按"老版本"的路径写一份 settings.json，返回**旧用户目录**（`文字创作agent` 那种）。"""
+    legacy = tmp_path / "文字创作agent"
+    legacy.mkdir(parents=True, exist_ok=True)
+    SettingsStore(legacy / "settings.json").save(AppSettings(**fields))
+    return legacy
+
+
+def _legacy_dirs(monkeypatch, *dirs: Path) -> None:
+    """把 `paths.legacy_user_dirs()` 指到给的那几个旧目录（conftest 缺省置空）。"""
+    from harness import paths as paths_mod
+    monkeypatch.setattr(paths_mod, "legacy_user_dirs", lambda: list(dirs))
+
+
+def test_load_falls_back_to_legacy_dir_after_rename(monkeypatch, tmp_path):
+    """改名后**仍读得到老设置**：新落点没有就回落旧目录读，用户的 key 不会静默失效。
+
+    §1.1 把用户数据目录名从 `文字创作agent` 统一到 `Ensemble-AI-Studio`。只改常量的话，
+    老用户（含开发机）那份 settings.json 就落在新落点之外——load() 读不到、不报错、界面回到
+    默认主题、api_key 丢了还会悄悄退回离线 stub。故新落点读不出可用设置时逐个回落旧目录
+    **读**（只读：load() 不写盘，迁移发生在下一次 save/update）。
+    """
+    legacy = _write_legacy_settings(tmp_path, api_key="sk-旧的", theme="深色")
+    _legacy_dirs(monkeypatch, legacy)
+
+    store = SettingsStore()                 # 缺省路径（conftest 沙箱，文件不存在）
+    assert not store.path.exists()
+    s = store.load()
+    assert s.api_key == "sk-旧的" and s.theme == "深色"
+    assert not store.path.exists(), "load() 只读：不迁移、不落盘、更不动旧文件"
+
+
+def test_new_settings_win_over_legacy(monkeypatch, tmp_path):
+    """新落点有就用新的（回落只在"新落点没有"时发生）。"""
+    legacy = _write_legacy_settings(tmp_path, api_key="sk-旧的")
+    _legacy_dirs(monkeypatch, legacy)
+
+    store = SettingsStore()
+    store.save(AppSettings(api_key="sk-新的"))
+    assert store.load().api_key == "sk-新的"
+
+
+def test_corrupt_new_file_still_falls_back_to_legacy(monkeypatch, tmp_path):
+    """新文件损坏时**继续**试旧文件——一份坏掉的新文件不该连带丢掉用户填过的 key。"""
+    legacy = _write_legacy_settings(tmp_path, api_key="sk-旧的")
+    _legacy_dirs(monkeypatch, legacy)
+
+    store = SettingsStore()
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text("{ 这不是 JSON", encoding="utf-8")
+    assert store.load().api_key == "sk-旧的"
+
+
+def test_legacy_file_is_never_written_or_deleted(monkeypatch, tmp_path):
+    """旧文件**只读**：save/update 一律写新落点，旧文件原样留着（清不清由用户决定）。"""
+    legacy = _write_legacy_settings(tmp_path, api_key="sk-旧的", theme="默认")
+    _legacy_dirs(monkeypatch, legacy)
+
+    store = SettingsStore()
+    store.update(api_key="sk-新的", theme="深蓝")
+    assert store.path.exists() and store.path.parent != legacy
+    kept = json.loads((legacy / "settings.json").read_text(encoding="utf-8"))
+    assert kept["api_key"] == "sk-旧的" and kept["theme"] == "默认"
+    assert store.load().api_key == "sk-新的", "迁移后以新落点为准"
+
+
+def test_explicit_path_does_not_fall_back_to_legacy(monkeypatch, tmp_path):
+    """**显式**给的路径只认它自己：`SettingsStore(p)` 不该"顺带"读用户旧目录。
+
+    否则 p 指哪儿都读得到别处的设置（测试设的隔离目录也会形同虚设）。
+    """
+    legacy = _write_legacy_settings(tmp_path, api_key="sk-旧的")
+    _legacy_dirs(monkeypatch, legacy)
+
+    store = SettingsStore(tmp_path / "别处" / "settings.json")
+    assert store.load() == AppSettings()
+
+
+def test_legacy_settings_paths_come_from_paths_single_source(monkeypatch, tmp_path):
+    """旧文件候选由 `paths.legacy_user_dirs()` 单点派生（平台分支与旧目录名不在这里再写一份）。"""
+    from harness.gui import settings as settings_mod
+
+    _legacy_dirs(monkeypatch, tmp_path / "旧")
+    assert settings_mod.legacy_settings_paths() == (tmp_path / "旧" / "settings.json",)
+
+
+def test_no_legacy_dirs_means_no_fallback():
+    """测试默认没有旧目录（conftest 沙箱夹具置空）——即"绝不读真实用户老文件"这条纪律。"""
+    from harness.gui import settings as settings_mod
+    assert settings_mod.legacy_settings_paths() == ()
 
 
 def test_save_then_load_round_trip(tmp_path):

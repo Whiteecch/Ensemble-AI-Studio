@@ -1,7 +1,7 @@
 """桌面外壳 S2a（离屏、确定性）：三栏面板重构的界面契约。
 
 锁定四件事：
-  · 左栏**整栏可滚动**（QScrollArea：widgetResizable、无横向条），「开场设定」卡与餐厅
+  · 左栏**整栏可滚动**（QScrollArea：widgetResizable、无横向条），「开场设定」卡与贝克街221B
     绑定行（打烊/剩余到打烊）彻底消失，原「场景时间」并入「场景」卡且只留通用行
     （场景名/日期（设了才有）/开始/当前/在场人数/边界）——边界是无时间硬边界时给「—」，
     界面上绝不出现「打烊」这类题材词；运行控制/推进控件在滚动重构后仍在且可达。
@@ -168,7 +168,7 @@ def _left_ui_text(win: MainWindow) -> str:
     return "\n".join(chunks)
 
 
-def _scene_info(*, name: str = "餐厅", participants=("甲",), boundary=None,
+def _scene_info(*, name: str = "贝克街221B", participants=("甲",), boundary=None,
                 boundary_time=None, date=None, characters=None) -> dict:
     """一份 sig_scene_info 等价载荷（worker.build_scene_payload 的形状）。"""
     scene = {"name": name, "participants": list(participants),
@@ -216,7 +216,7 @@ def test_fmt_count_at_and_above_threshold_uses_k():
     assert fmt_count(100_000_000) == "100000k"
 
 
-# ============================================================ 左栏：滚动 + 去餐厅绑定
+# ============================================================ 左栏：滚动 + 去贝克街221B绑定
 def test_left_panel_whole_column_lives_in_scroll_area(win):
     """整栏包在滚动区里：widgetResizable、无横向滚动条；各卡的部件都在滚动区内容中。"""
     scroll = win._left_scroll
@@ -240,7 +240,7 @@ def test_left_panel_dropped_opening_card_and_restaurant_rows(win):
     """「开场设定」卡与 打烊/剩余到打烊 行彻底消失；中栏输入框是唯一 QLineEdit。"""
     left = _left_ui_text(win)
     assert "开场设定" not in left, "开场设定卡应已删除（开场由开始界面/场景库负责）"
-    assert "打烊" not in left, "不得再出现餐厅绑定措辞「打烊」（含 tooltip）"
+    assert "打烊" not in left, "不得再出现贝克街221B绑定措辞「打烊」（含 tooltip）"
     assert "剩余" not in left, "不得再有「剩余到打烊」行"
     assert not hasattr(win, "_opening_edit"), "开场输入框部件应已删除"
     assert win.findChild(QLineEdit, "opening") is None, "不应再有 objectName=opening 的输入框"
@@ -260,7 +260,7 @@ def test_left_scene_card_merges_clock_and_shows_neutral_rows(win):
     left = _left_text(win)
     for key in ("场景名", "开始", "当前", "在场人数", "边界"):
         assert key in left, f"合并后的场景卡应有「{key}」行"
-    assert win._scene_value.text() == "餐厅"
+    assert win._scene_value.text() == "贝克街221B"
     assert win._participants_value.text() == "甲、乙"
     assert win._clock_time["start"].text() == "21:30"
     assert win._boundary_value.text() == "22:00", "有 time 硬边界 → 边界行给 HH:MM"

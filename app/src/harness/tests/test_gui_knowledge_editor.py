@@ -948,11 +948,11 @@ def test_import_result_text_names_the_library_kind():
     assert "角色卡" not in text, "那是卡，不是库"
 
     # 回归：既有两类一字不动
-    sc = ImportResult(path=Path("C:/tmp/a.json"), kind="scene", name="餐厅",
+    sc = ImportResult(path=Path("C:/tmp/a.json"), kind="scene", name="贝克街221B",
                       card_or_scene=None, empty_fields=[], warnings=[])
     ch = ImportResult(path=Path("C:/tmp/乙.json"), kind="character", name="乙",
                       card_or_scene=None, empty_fields=[], warnings=[])
-    assert "已导入场景卡《餐厅》" in import_result_text(sc)
+    assert "已导入场景卡《贝克街221B》" in import_result_text(sc)
     assert "已导入角色卡《乙》" in import_result_text(ch)
 
 
@@ -966,7 +966,7 @@ def test_mainwindow_import_passes_the_libraries_root(qapp, tmp_path, lib_root,
     def _import(path, **kw):
         seen.update(kw)
         seen["path"] = Path(path)
-        return ImportResult(path=Path("C:/tmp/a.json"), kind="scene", name="餐厅",
+        return ImportResult(path=Path("C:/tmp/a.json"), kind="scene", name="贝克街221B",
                             card_or_scene=None, empty_fields=[], warnings=[])
 
     monkeypatch.setattr(mw_mod, "import_template_file", _import)
@@ -986,7 +986,7 @@ def test_library_dialog_import_passes_the_libraries_root(tmp_path, monkeypatch,
 
     def _import(path, **kw):
         seen.update(kw)
-        return ImportResult(path=Path("C:/tmp/a.json"), kind="scene", name="餐厅",
+        return ImportResult(path=Path("C:/tmp/a.json"), kind="scene", name="贝克街221B",
                             card_or_scene=None, empty_fields=[], warnings=[])
 
     monkeypatch.setattr(lib_mod, "import_template_file", _import)

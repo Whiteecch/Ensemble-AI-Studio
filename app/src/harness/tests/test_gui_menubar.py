@@ -181,7 +181,7 @@ class _FakeWorker(QObject):
 
 
 def _make_window(tmp_path: Path, *, settings: AppSettings | None = None,
-                 scene_name: str = "餐厅",
+                 scene_name: str = "贝克街221B",
                  participants: tuple[str, ...] = ("甲", "乙"),
                  cards: tuple[str, ...] = ("甲", "乙")):
     """真实 MainWindow 装配（替身 worker，不 show、不起线程）+ 素材目录。
@@ -810,9 +810,9 @@ def test_scene_menu_has_the_spec_items_in_order(qapp, tmp_path, tmp_store):
     assert win._action_import_scene.isEnabled()
 
     # 开场成功 → 三项放开（与中栏那两枚按钮同源）。
-    win._on_scene_info({"scene": {"name": "餐厅", "participants": ["甲"]},
+    win._on_scene_info({"scene": {"name": "贝克街221B", "participants": ["甲"]},
                         "characters": [], "backend": "stub",
-                        "scene_path": str(sdir / "餐厅.json")})
+                        "scene_path": str(sdir / "贝克街221B.json")})
     assert win._action_save_scene.isEnabled()
     assert win._action_configure_scene.isEnabled()
     assert win._action_reset_scene.isEnabled()
@@ -820,14 +820,14 @@ def test_scene_menu_has_the_spec_items_in_order(qapp, tmp_path, tmp_store):
 
 def test_scene_menu_lists_library_scenes(qapp, tmp_path, tmp_store):
     """「打开场景」子菜单按场景库列场景名；坏文件用「（坏文件）」+ 文件名；空目录给禁用占位。"""
-    win, _worker, (_cdir, sdir) = _make_window(tmp_path)      # 已含 餐厅
+    win, _worker, (_cdir, sdir) = _make_window(tmp_path)      # 已含 贝克街221B
     _write_scene(sdir, "天台", ["甲"], filename="a-天台.json")
     (sdir / "z-坏文件.json").write_text("{这不是 JSON", encoding="utf-8")
 
     win._refresh_scene_menu()
     acts = win._open_scene_menu.actions()
     texts = [a.text() for a in acts]
-    assert "餐厅" in texts and "天台" in texts, "应列出场景名（读文件的 name）"
+    assert "贝克街221B" in texts and "天台" in texts, "应列出场景名（读文件的 name）"
     assert any(t.startswith("（坏文件）") and "z-坏文件" in t for t in texts), \
         "坏文件应显示为文件名 + 说明，而不是凭空消失（界面不留任何符号）"
     bad = next(a for a in acts if a.text().startswith("（坏文件）"))
@@ -875,7 +875,7 @@ def test_scene_menu_click_on_unreadable_scene_keeps_current_session(
     act.trigger()
 
     assert warned, "应提示无法切换（不静默）"
-    assert win._cfg.scene == sdir / "餐厅.json", "当前场次应保持不变"
+    assert win._cfg.scene == sdir / "贝克街221B.json", "当前场次应保持不变"
     assert worker.calls == [], "不得向 worker 重投开场"
 
 
@@ -890,7 +890,7 @@ def test_menu_dialog_does_not_block_the_worker(qapp, tmp_path, tmp_store, monkey
 
     cdir, sdir = tmp_path / "characters", tmp_path / "scenes"
     cards = [_write_card(cdir, n) for n in ("甲", "乙")]
-    scene = _write_scene(sdir, "餐厅", ["甲", "乙"])
+    scene = _write_scene(sdir, "贝克街221B", ["甲", "乙"])
     models = tmp_path / "models.yaml"
     models.write_text("think: {backend: stub, model: stub, params: {}}\n"
                       "speak: {backend: stub, model: stub, params: {}}\n"
@@ -1101,15 +1101,15 @@ def test_scene_title_keeps_scene_name_and_retranslates_its_suffix(
         qapp, tmp_path, tmp_store):
     """换场后的标题是「场景名 · <标题尾>」：切语言只换尾巴，场景名（数据）一字不动。"""
     win, _worker, _dirs = _make_window(tmp_path)
-    win._on_scene_info({"scene": {"name": "餐厅", "participants": ["甲"]},
+    win._on_scene_info({"scene": {"name": "贝克街221B", "participants": ["甲"]},
                         "characters": [], "backend": "stub"})
-    assert win.windowTitle() == "餐厅 · 多智能体角色扮演"
+    assert win.windowTitle() == "贝克街221B · 多智能体角色扮演"
 
     win.apply_language("en")
-    assert win.windowTitle() == "餐厅 · Multi-Agent Roleplay", "场景名不改，只换尾缀"
+    assert win.windowTitle() == "贝克街221B · Multi-Agent Roleplay", "场景名不改，只换尾缀"
 
     win.apply_language("zh-Hans")
-    assert win.windowTitle() == "餐厅 · 多智能体角色扮演"
+    assert win.windowTitle() == "贝克街221B · 多智能体角色扮演"
 
 
 def test_status_chip_maps_known_status_and_passes_unknown_through(

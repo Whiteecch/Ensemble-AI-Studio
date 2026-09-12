@@ -43,6 +43,36 @@ python -m harness.gui.app --stub     # force offline; drop --stub to use a real 
 
 The app opens on an empty state page. Pick the scene from the **场景** menu or the **打开场景** button. It drives the same engine on a background thread, with live bids, the think log, the scene-narration panel and a virtual clock.
 
+## Install
+
+Every [release](https://github.com/Whiteecch/Ensemble-AI-Studio/releases) carries prebuilt Windows artifacts. Pick the one that matches how you want to run it:
+
+| File | What it is | Size |
+|---|---|---|
+| `Ensemble-AI-Studio-0.1.0-Setup.exe` | Installer. The recommended path: Start-menu entry, optional desktop shortcut, uninstaller. | 33 MB |
+| `Ensemble-AI-Studio-0.1.0-portable.zip` | The same one-folder build, zipped. Unzip anywhere and run `Ensemble-AI-Studio.exe`. Fastest start. | 42 MB |
+| `Ensemble-AI-Studio-0.1.0-onefile.exe` | One self-contained exe. Nothing to unzip, but every start unpacks to a temp folder (10-30 s) and antivirus heuristics sometimes dislike it. | 42 MB |
+| `ensemble-0.1.0-py3-none-any.whl` | The Python package for `pip install ensemble`: the engine, the two CLI commands and the desktop-app code. **Code only** — no Qt (install PySide6 yourself) and no materials (see the note below). | 1.2 MB |
+
+The wheel is the one artifact that is *only* code: it carries no `characters/ scenes/ config/ templates/`, because those live in the repository rather than inside the `harness` package (a wheel can only install importable packages, not a data directory beside them). So `pip install ensemble` gives you an engine to `import` and the three commands, but `ensemble-demo` needs a scene you point it at and the desktop app opens with an empty library. Every command takes explicit paths instead of the bundled defaults, so a pip-only install still drives material you have: `ensemble-demo --scene your-scene.json --characters your-card.json --models models.yaml`, `ensemble-import your-card.md --characters-dir <dir>`, and the same dialogs in the desktop app. Take the Setup, the portable zip, or a repo clone (`pip install -e`, see Quickstart) if you want the bundled Holmes demo scene and its two cards — on macOS and Linux, where the three Windows bundles do not apply, the repo clone is the way.
+
+The binaries are not code-signed, so the first run trips Windows SmartScreen: click **More info → Run anyway**.
+
+**Installing.** Double-click the Setup, read and accept the MIT license, then choose a folder — the default is `C:\Program Files\Ensemble-AI-Studio`, and the "install for me only" option puts it under `%LOCALAPPDATA%` with no UAC prompt. Tick the desktop-shortcut box if you want one; nothing else is installed (no service, no file associations, no registry keys beyond the uninstall entry).
+
+**Upgrading.** Run a newer Setup over the old install. Your data is not touched and stays where it is.
+
+**Uninstalling.** Settings → Apps → Ensemble-AI-Studio → Uninstall. **Your work is kept on purpose**: characters, scenes, the information library, saved runs and settings all live in `%APPDATA%\Ensemble-AI-Studio`, and the uninstaller tells you so, offers to open that folder, and leaves deleting it to you.
+
+### First run
+
+1. The app opens straight on the main window, with no scene loaded: an empty state page with three buttons (**打开场景 / 新建场景 / 新建角色**). On the very first start it also *seeds* an editable copy of the bundled materials — the Sherlock Holmes scene and both character cards — into `%APPDATA%\Ensemble-AI-Studio\`. Bundled files are never overwritten afterwards, so upgrading cannot clobber a card you edited. (The bundled builds carry those materials; a pip-only install of the wheel does not — there is nothing to seed, see the Install note.)
+2. **No API key? It still runs.** With no key in Settings and no `DEEPSEEK_API_KEY` in the environment, the engine falls back to the offline `stub` backend — placeholder lines that let you drive the whole interface — and the top bar shows an **offline stub** badge. Open **设置**, paste a key and a model name, and the next scene you start uses the real model.
+3. Everything you create lives under `%APPDATA%\Ensemble-AI-Studio`: `characters/`, `scenes/`, `config/`, `runs/` (one folder per scene, holding the transcript and each character's private memory) and `settings.json`.
+4. When something looks off, look at the status chip and the log panel first; per-scene detail is in `%APPDATA%\Ensemble-AI-Studio\runs\<scene>\`.
+
+To build these artifacts yourself — PyInstaller, the Qt trimming, the installer, all from one command — see [`packaging/README.md`](packaging/README.md).
+
 ## Quickstart
 
 **Prerequisites.** Python 3.10 or newer. Windows, macOS or Linux. PySide6 for the desktop app.

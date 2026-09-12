@@ -25,7 +25,7 @@ def _cards():
 
 
 def _scene():
-    return Scene(name="餐厅", participants=["乙", "甲"])
+    return Scene(name="贝克街221B", participants=["乙", "甲"])
 
 
 def _think(urge: float, impression=None) -> dict:
@@ -40,22 +40,22 @@ def _ids(text: str) -> set[int]:
 
 _SEED = [
     {"id": 0, "speaker": "导演", "speaker_type": "director",
-     "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0},
+     "content": "（贝克街221B开场）", "in_scene": "贝克街221B", "turn": 0},
     {"id": 1, "speaker": "乙", "speaker_type": "character",
-     "content": "这家店我常来。", "in_scene": "餐厅", "turn": 1},
+     "content": "这家店我常来。", "in_scene": "贝克街221B", "turn": 1},
     {"id": 2, "speaker": "甲", "speaker_type": "character",
-     "content": "是吗。", "in_scene": "餐厅", "turn": 1},
+     "content": "是吗。", "in_scene": "贝克街221B", "turn": 1},
     {"id": 3, "speaker": "乙", "speaker_type": "character",
-     "content": "其实我紧张得手都在抖。", "in_scene": "餐厅",
+     "content": "其实我紧张得手都在抖。", "in_scene": "贝克街221B",
      "knows": ["乙"], "turn": 2},           # 甲不可见（knows 外密语）
     {"id": 4, "speaker": "乙", "speaker_type": "character",
-     "content": "你喝什么？", "in_scene": "餐厅", "turn": 3},
+     "content": "你喝什么？", "in_scene": "贝克街221B", "turn": 3},
     {"id": 5, "speaker": "甲", "speaker_type": "character",
-     "content": "热的。", "in_scene": "餐厅", "turn": 3},
+     "content": "热的。", "in_scene": "贝克街221B", "turn": 3},
     {"id": 6, "speaker": "乙", "speaker_type": "character",
-     "content": "那就热的。", "in_scene": "餐厅", "turn": 4},
+     "content": "那就热的。", "in_scene": "贝克街221B", "turn": 4},
     {"id": 7, "speaker": "乙", "speaker_type": "character",
-     "content": "再加一碟花生。", "in_scene": "餐厅", "turn": 5},
+     "content": "再加一碟花生。", "in_scene": "贝克街221B", "turn": 5},
 ]
 
 
@@ -186,7 +186,7 @@ def _director_open() -> dict:
     """最小开场：只有导演一行可见消息，turn 0。"""
     return {"messages": [
         {"id": 0, "speaker": "导演", "speaker_type": "director",
-         "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0}],
+         "content": "（贝克街221B开场）", "in_scene": "贝克街221B", "turn": 0}],
         "urges": {}, "current_speaker": None, "turn": 0,
         "silent_streak": 0, "decided": None, "injected": []}
 
@@ -238,7 +238,7 @@ def test_speak_prev_line_anchor_is_other_speakers_visible_line(tmp_path, monkeyp
     assert [c["name"] for c in calls] == ["乙", "甲"]
     white, xiao = calls
     # 乙块1可见最新 = 导演开场行（自己说的话要等块2才有）
-    assert white["prev_line_text"] == "[0] 导演: （餐厅开场）"
+    assert white["prev_line_text"] == "[0] 导演: （贝克街221B开场）"
     assert white["own_previous"] is False
     # 甲块2锚点 = 乙刚说的那句归属行（非空、带说话人），不是她自己的话
     assert xiao["prev_line_text"] == "[1] 乙: 这家店我常来。"
@@ -332,11 +332,11 @@ def test_speak_prev_line_never_leaks_knows_restricted_newest(tmp_path, monkeypat
     cards, scene = _cards(), _scene()
     seed = [
         {"id": 0, "speaker": "导演", "speaker_type": "director",
-         "content": "（餐厅开场）", "in_scene": "餐厅", "turn": 0},
+         "content": "（贝克街221B开场）", "in_scene": "贝克街221B", "turn": 0},
         {"id": 1, "speaker": "乙", "speaker_type": "character",
-         "content": "今晚这桌我请。", "in_scene": "餐厅", "turn": 1},
+         "content": "今晚这桌我请。", "in_scene": "贝克街221B", "turn": 1},
         {"id": 2, "speaker": "乙", "speaker_type": "character",
-         "content": "其实我紧张得手都在抖。", "in_scene": "餐厅",
+         "content": "其实我紧张得手都在抖。", "in_scene": "贝克街221B",
          "knows": ["乙"], "turn": 2},   # 密语：甲不可见，却是共享态最新条
     ]
     think = StubBackend(json_script=[_think(0.0), _think(1.5)])   # 白安静、甲拿话筒

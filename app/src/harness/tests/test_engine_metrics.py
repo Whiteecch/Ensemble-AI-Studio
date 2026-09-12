@@ -8,8 +8,8 @@ from harness.tests.helpers import assert_public_only
 
 
 def _write(tmp_path: Path):
-    (tmp_path / "餐厅.json").write_text(json.dumps({
-        "name": "餐厅", "participants": ["甲", "乙"],
+    (tmp_path / "贝克街221B.json").write_text(json.dumps({
+        "name": "贝克街221B", "participants": ["甲", "乙"],
         "hard_boundary": {"type": "time", "value": "22:00", "desc": "打烊"}},
         ensure_ascii=False), encoding="utf-8")
     (tmp_path / "甲.json").write_text(json.dumps({"name": "甲",
@@ -19,7 +19,7 @@ def _write(tmp_path: Path):
     (tmp_path / "models.yaml").write_text(
         "think:\n  backend: stub\n  model: stub\n  params: {}\n"
         "speak:\n  backend: stub\n  model: stub\n  params: {}\n", encoding="utf-8")
-    return (tmp_path / "餐厅.json", tmp_path / "甲.json",
+    return (tmp_path / "贝克街221B.json", tmp_path / "甲.json",
             tmp_path / "乙.json", tmp_path / "models.yaml")
 
 

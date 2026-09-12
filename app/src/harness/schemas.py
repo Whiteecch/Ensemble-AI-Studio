@@ -149,7 +149,7 @@ class Scene(BaseModel):
     name: str
     date: str = ""               # 可选的年月日（自由文本或 ISO，空=界面不显示）
     background: str = ""         # 背景信息（世界观/设定）
-    description: str = ""        # 场景描述（如"餐厅里有一些桌椅"）
+    description: str = ""        # 场景描述（如"贝克街221B里有一些桌椅"）
     description_mutable: bool = False   # 「可改变的」：勾选后场景可申请改写描述
     plot_direction: str = ""     # 剧情设定：用户期望的走向
     #: 触发器列表（§4）：hooks.Hook 是纯 stdlib dataclass，逐条严格校验（用户内容，

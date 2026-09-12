@@ -309,9 +309,9 @@ def test_a_broken_relation_file_crashes_nothing(tmp_path):
 #: 对拍 HEAD 的黄金值：改动前（`git show HEAD`）这一组入参渲染出的**系统/用户消息**的
 #: SHA-256。无关系的角色必须逐字节等于它们——提示词里不许出现空小节、空行或任何占位。
 _HEAD_THINK_SYSTEM = "3d4c42fb3b380acee779452c0d22e0a80075a8b230c281f3f339d662ec498ab2"
-_HEAD_THINK_USER = "3323b4b016ba94fb0e37d6670e0df8ec47a4cf53dab11787f349be20508fdf5f"
+_HEAD_THINK_USER = "7c5e1baca2010cd33360b3102e46a06dae5291d3eef1b3491604ba4fb225c877"
 _HEAD_SPEAK_SYSTEM = "2061915d5527ffddb028c48f0ca8a7355113ecfc5bd927426ac41e921528bc0b"
-_HEAD_SPEAK_USER = "06f7cf5b5843923d86ccdc23b4fd78e6f796b6f459833da64b693f7e6fe741ed"
+_HEAD_SPEAK_USER = "6f5dde0bf4f392332e4fb90f9fac98dd881f5e9109f79c49d786a0c6243e084c"
 
 
 def _think_json(urge: float) -> dict:
@@ -327,11 +327,11 @@ def _card():
 
 def _think(**kw) -> list[dict]:
     return build_think_messages(_card(), view_text="[1] 丁: 你好", last_chunk_text="你好",
-                                scene_text="场景：餐厅", **kw)
+                                scene_text="场景：贝克街221B", **kw)
 
 
 def _speak(**kw) -> list[dict]:
-    return build_speak_messages(_card(), view_text="[1] 丁: 你好", scene_text="场景：餐厅",
+    return build_speak_messages(_card(), view_text="[1] 丁: 你好", scene_text="场景：贝克街221B",
                                 prev_line_text="[1] 丁: 你好", **kw)
 
 

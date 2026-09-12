@@ -74,8 +74,8 @@ def _make_window(tmp_path: Path):
         p.write_text(json.dumps({"name": name, "personality": {"描述": "示例"}},
                                 ensure_ascii=False), encoding="utf-8")
         card_paths.append(p)
-    scene = scenes / "餐厅.json"
-    scene.write_text(json.dumps({"name": "餐厅", "participants": ["甲", "乙"]},
+    scene = scenes / "贝克街221B.json"
+    scene.write_text(json.dumps({"name": "贝克街221B", "participants": ["甲", "乙"]},
                                 ensure_ascii=False), encoding="utf-8")
     models = tmp_path / "models.yaml"
     models.write_text("think: {backend: stub, model: stub, params: {}}\n"
@@ -88,14 +88,14 @@ def _make_window(tmp_path: Path):
     return MainWindow(worker, cfg), worker
 
 
-_DIAG = {"fields": {"name": "餐厅"}, "hooks": ["h1"], "description_mutable": True,
+_DIAG = {"fields": {"name": "贝克街221B"}, "hooks": ["h1"], "description_mutable": True,
          "language": "zh-Hans", "hook_error": None,
          "tool_error": "场景工具指令未改动任何字段（set_name）",
          "save_error": None, "implicit_events": []}
 
 
 def _open(win, worker) -> None:
-    worker.sig_scene_info.emit({"scene": {"name": "餐厅", "participants": ["甲", "乙"]},
+    worker.sig_scene_info.emit({"scene": {"name": "贝克街221B", "participants": ["甲", "乙"]},
                                 "characters": [], "backend": "stub"})
 
 
